@@ -560,7 +560,19 @@ if __name__ == '__main__':
         sys.exit(0)
 
     if flags.list:
+        last_repo_name = None
+        last_week_n = -1
         for repo_name, pr in pr_with_eta(gh, settings["start_time"]):
+            # reset
+            if repo_name != repo_name:
+                repo_name = repo_name
+                last_week_n = -1
+
+            this_week_n = pr.created_at.isocalendar()[1]
+            if last_week_n != this_week_n:
+                _logger.info(("\n\nWeek #%02d   " + 40 * "="), this_week_n)
+                last_week_n = this_week_n
+
             assignee = pr.assignee.login if pr.assignee else "unknown"
             merged_by = pr.merged_by.login if pr.merged_by else "unknown"
             _logger.info(
