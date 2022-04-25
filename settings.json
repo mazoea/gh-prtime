@@ -1,0 +1,22 @@
+{
+    "projects": [
+        [
+            "mazoea/c-image-to-text",
+            [
+                410,
+                405,
+                400,
+                395,
+                386,
+                423
+            ]
+        ],
+        [
+            "mazoea/te-server",
+            []
+        ]
+    ],
+    "start_time": "2022-02-01",
+    "state_dir": "./__state",
+    "base": "dp_advent"
+}
