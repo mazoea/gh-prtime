@@ -121,6 +121,8 @@ class eta_row:
 
 class eta_table:
 
+    label_prefix = "ETA_err_"
+
     def __init__(self, pr, pr_id, cols):
         self.pr = pr
         self.pr_id = pr_id
@@ -217,6 +219,45 @@ class eta_table:
             return False
 
         return True
+
+    def validate_hours(self, pr=None):
+        errors = []
+        valid = True
+
+        def _add_error(s: str): errors.append("%s%s" % (eta_table.label_prefix, s))
+
+        if self.total_reported == 0:
+            _logger.critical("Total reported is 0!")
+            _add_error("total_is_0")
+            valid = False
+        if self.cust_est == 0:
+            _logger.critical("Customer ETA is 0!")
+            _add_error("cust_is_0")
+            valid = False
+
+        calc_stage_totals = defaultdict(int)
+        for stage in ETA.stages:
+            for dev, hours in self.dev_hours.items():
+                calc_stage_totals[stage] += hours[stage]
+        stage_totals = self.stage_totals
+
+        html_url = pr.html_url if pr is not None else ""
+
+        for stage in ETA.stages:
+            if stage_totals[stage] != calc_stage_totals[stage]:
+                _logger.critical("Incorrect stage [%s] totals [%s] [%s] in [%s]\n\t->[%s]",
+                                 stage, stage_totals[stage], calc_stage_totals[stage], self.pr_id, html_url)
+                valid = False
+                _add_error("stage_%s" % stage)
+
+        calc_total_reported = sum(stage_totals.values())
+        if calc_total_reported != self.total_reported:
+            _logger.critical("Incorrect totals [%s] [%s] in [%s]\n\t->[%s]",
+                             calc_total_reported, self.total_reported, self.pr_id, html_url)
+            valid = False
+            _add_error("totals")
+
+        return valid, errors
 
 
 def parse_eta_lines(pr):
@@ -431,24 +472,7 @@ def validate(gh, state="closed", sort_by=None):
         if eta is None:
             continue
 
-        calc_stage_totals = defaultdict(int)
-        for stage in ETA.stages:
-            for dev, hours in eta.dev_hours.items():
-                calc_stage_totals[stage] += hours[stage]
-        stage_totals = eta.stage_totals
-
-        err = False
-        for stage in ETA.stages:
-            if stage_totals[stage] != calc_stage_totals[stage]:
-                _logger.critical("Incorrect stage [%s] totals [%s] [%s] in [%s]\n\t->[%s]",
-                                 stage, stage_totals[stage], calc_stage_totals[stage], eta.pr_id, pr.html_url)
-                err = True
-        calc_total_reported = sum(stage_totals.values())
-        if calc_total_reported != eta.total_reported:
-            _logger.critical("Incorrect totals [%s] [%s] in [%s]\n\t->[%s]",
-                             calc_total_reported, eta.total_reported, eta.pr_id, pr.html_url)
-            err = True
-
+        err, _1 = eta.validate_hours(pr)
         if not err:
             msg = "Issue [%-70s] is OK" % (eta.pr_id,)
             ok_status.append((msg, pr))
