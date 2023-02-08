@@ -17,11 +17,12 @@ import argparse
 import re
 import glob
 import json
+import tqdm
 from pprint import pformat
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from github import Github
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _ts = datetime.now().strftime("%Y_%m_%d__%H.%M.%S")
 _logger = logging.getLogger()
@@ -38,6 +39,7 @@ if os.path.exists(env_file):
             if k in os.environ:
                 continue
             os.environ[k] = v
+
 
 # =================
 
@@ -150,6 +152,10 @@ class eta_table:
         return self._d["customer_estimate"]
 
     @property
+    def est(self):
+        return self._d["estimate"]
+
+    @property
     def dev_hours(self):
         return self._d["dev_hours"]
 
@@ -161,6 +167,10 @@ class eta_table:
         d = {}
         try:
             d["customer_estimate"] = float(self.rows[-1].total)
+        except:
+            return None
+        try:
+            d["estimate"] = float(self.rows[-2].total)
         except:
             return None
         try:
@@ -177,7 +187,11 @@ class eta_table:
                     continue
                 for i, h in enumerate(row.dev_hours):
                     dev_hours[self.rows[0].dev_names[i]][stage] = h
-                stage_totals[stage] = float(row.total)
+                try:
+                    stage_totals[stage] = float(row.total)
+                except Exception as e:
+                    _logger.critical(f"Cannot parse stage total [{row.total}] [{stage}] [{self.pr_id}]\n{self.pr}")
+                    raise
                 found = True
                 break
             if not found:
@@ -245,22 +259,25 @@ class eta_table:
 
         for stage in ETA.stages:
             if stage_totals[stage] != calc_stage_totals[stage]:
-                _logger.critical("Incorrect stage [%s] totals [%s] [%s] in [%s]\n\t->[%s]",
-                                 stage, stage_totals[stage], calc_stage_totals[stage], self.pr_id, html_url)
+                _logger.critical("Check stage totals: stage [%s]=[%s], NOT [%s] in [%s]\n\t->[%s]",
+                                 stage, calc_stage_totals[stage], stage_totals[stage], self.pr_id, html_url)
                 valid = False
                 _add_error("stage_%s" % stage)
 
         calc_total_reported = sum(stage_totals.values())
         if calc_total_reported != self.total_reported:
-            _logger.critical("Incorrect totals [%s] [%s] in [%s]\n\t->[%s]",
-                             calc_total_reported, self.total_reported, self.pr_id, html_url)
+            _logger.critical("Check totals: =[%s], NOT [%s] in [%s]\n\t->[%s]",
+                             self.total_reported, calc_total_reported, self.pr_id, html_url)
             valid = False
             _add_error("totals")
 
         return valid, errors
 
 
-def parse_eta_lines(pr):
+def parse_eta_lines(pr) -> tuple:
+    """
+        Return list of lines that contain the ETA table.
+    """
     rec_start = re.compile("phases.*total", re.I)
     rec_line = re.compile("[|].*[|]", re.I)
     l_arr = []
@@ -274,7 +291,11 @@ def parse_eta_lines(pr):
         if rec_line.search(l) is None:
             break
         l_arr.append(l)
-    return l_arr
+
+    # check if we should ignore this table
+    ignored = 0 < len(l_arr) and "ignore" in l_arr[0].lower()
+
+    return l_arr, ignored
 
 
 def parse_eta(pr, pr_id):
@@ -288,10 +309,21 @@ def parse_eta(pr, pr_id):
 | ETA est.             |      |       |       |         |     40  |
 | ETA cust.           |   -  |   -  |   -   |   -     |        40 |
     """
-    l_arr = parse_eta_lines(pr)
+    l_arr, ignored = parse_eta_lines(pr)
+    if ignored:
+        return None
+
+    if len(l_arr) == 0:
+        _logger.critical(f"Cannot parse ETA table [{pr_id}]\n{pr.html_url}")
+        return None
+
     # parse
     cols = [[x.strip() for x in x.split("|")] for x in l_arr]
-    eta = eta_table(pr, pr_id, cols)
+    try:
+        eta = eta_table(pr, pr_id, cols)
+    except Exception as e:
+        _logger.critical(f"Cannot parse ETA table [{pr_id}]\n{pr.html_url}")
+        return None
 
     # verification #1
     if not eta.valid:
@@ -300,14 +332,9 @@ def parse_eta(pr, pr_id):
     return eta
 
 
-def pr_with_eta(gh, start_at, state=None, base=None):
+def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None):
     """
-
-
-    :param gh:
-    :param start_at:
-    :param state: "all", "closed"
-    :return:
+    state: "all", "closed"
     """
 
     rec_pr_time = re.compile(r"[|]\s*ETA")
@@ -318,7 +345,7 @@ def pr_with_eta(gh, start_at, state=None, base=None):
         pulls = repo.get_pulls(state=state or 'all', sort='created',
                                direction="desc", base=base or settings["base"])
         _logger.info("Total PR count: [%d]", pulls.totalCount)
-        for pr in pulls:
+        for pr in tqdm.tqdm(pulls):
             if pr.number in ignored_pr:
                 continue
 
@@ -463,10 +490,10 @@ def find_hours(gh, input_arr, input_are_ids):
         _logger.critical("Did not find hours for issues [%s]", missing)
 
 
-def validate(gh, state="closed", sort_by=None):
+def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
     ok_status = []
 
-    for repo_name, pr in pr_with_eta(gh, settings["start_time"], state=state):
+    for repo_name, pr in pr_with_eta(gh, start_date, state=state):
         pr_id = get_pr_id(repo_name, pr)
         eta = parse_eta(pr, pr_id)
         if eta is None:
@@ -485,13 +512,176 @@ def validate(gh, state="closed", sort_by=None):
     ok_status.sort(key=lambda x: getattr(x[1], sort_by), reverse=True)
     last_week_n = -1
     for msg, pr in ok_status:
-        this_week_n = getattr(pr, sort_by).isocalendar()[1]
+        cal = getattr(pr, sort_by).isocalendar()
+        this_week_n = cal[1]
         if last_week_n != this_week_n:
-            _logger.info(("Week #%02d   " + 20 * "="), this_week_n)
+            _logger.info(f"=== {cal[0]}: week #{this_week_n:02d}   " + 20 * "=")
             last_week_n = this_week_n
 
         msg += " [%s:%%s]\t%s" % (sort_by, pr.html_url)
         _logger.info(msg, getattr(pr, sort_by))
+
+
+class hours_row(object):
+    h_week = "#Week"
+    h_customer = "Cust"
+    h_issue = "Issue"
+    h_link_gh = "Link GH"
+    h_link_jira = "Link JIRA"
+    h_state = "State"
+    h_tracked = "Tracked"
+    h_eta = "ETA"
+    h_eta_cust = "ETA Cust"
+    h_closed = "Closed"
+    h_phase_eta = "Phase ETA"
+    h_phase_dev = "Phase Dev"
+    h_phase_review = "Phase Review"
+    h_phase_total = "Phase Total"
+    h_dev_total = "Dev Total"
+    h_dev_jh = "Dev JH"
+    h_dev_jp = "Dev JP"
+    h_dev_tm = "Dev TM"
+    h_dev_others = "Dev Others"
+
+    h_spec = (
+        h_week, h_customer, h_issue, h_link_gh, h_link_jira, h_state, h_tracked, h_eta, h_eta_cust, h_closed,
+        h_phase_eta, h_phase_dev, h_phase_review, h_phase_total, h_dev_total,
+        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others
+    )
+    header = "|" + ("|".join([f" {x:10s} " for x in h_spec]))[1:] + " |"
+    header_len = header.count("|") - 1
+    header_sep = header_len * ("| %10s " % "----:") + " |"
+
+    def __init__(self):
+        self._d = OrderedDict()
+        for k in self.h_spec:
+            self._d[k] = ""
+
+    def __getitem__(self, k): return self._d[k]
+    def __setitem__(self, k, v): self._d[k] = v
+
+    def dev(self, key, value):
+        exp_k = f"Dev {key}"
+        for k in self._d.keys():
+            if k == exp_k:
+                self._d[k] = value
+                return
+        if self._d[self.h_dev_others] == "":
+            self._d[self.h_dev_others] = value
+        else:
+            self._d[self.h_dev_others] += value
+
+    def __str__(self):
+        s = ""
+        for k, v in self._d.items():
+            s += f"| {v} "
+        return s + "|"
+
+
+def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None, output_md: str = None):
+    """
+        Show hours of all specified issues.
+    """
+    ok_status = []
+    in_progress = []
+
+    def pr_to_md_hours(pr, eta, this_week_n):
+        r = hours_row()
+        r[r.h_week] = this_week_n
+        r[r.h_customer] = "internal"
+        r[r.h_issue] = f"{'/'.join(pr.html_url.split('/')[-3:])}:{pr.title}"
+        r[r.h_link_gh] = pr.html_url
+        r[r.h_state] = pr.state
+        r[r.h_closed] = pr.closed_at
+
+        if pr.state == "closed":
+            assert eta is not None
+            r[r.h_eta] = eta.est
+            r[r.h_eta_cust] = eta.cust_est
+
+            p0, p1, p2 = \
+                eta.stage_totals[ETA.stages[0]], \
+                eta.stage_totals[ETA.stages[1]], \
+                eta.stage_totals[ETA.stages[2]]
+            r[r.h_phase_eta] = p0
+            r[r.h_phase_dev] = p1
+            r[r.h_phase_review] = p2
+            r[r.h_phase_total] = p0 + p1 + p2
+
+            dev_total = 0
+            for dev, hours in eta.dev_hours.items():
+                t = sum(hours.values())
+                r.dev(dev, t)
+                dev_total += t
+            r[r.h_dev_total] = dev_total
+
+        rec = re.compile(r"jira\D?(\d+)", re.IGNORECASE)
+        m = rec.search(r[r.h_issue])
+        if m:
+            r[r.h_link_jira] = f"https://adventhp.atlassian.net/browse/OCR-{m.group(1)}"
+            r[r.h_customer] = "advent"
+
+        return r
+
+    for repo_name, pr in pr_with_eta(gh, start_date, state="all"):
+        if pr.state != state:
+            if pr.state == "open":
+                in_progress.append(pr)
+            continue
+
+        pr_id = get_pr_id(repo_name, pr)
+        eta = parse_eta(pr, pr_id)
+        if eta is None:
+            continue
+        ok_status.append((eta, pr))
+
+    if 0 == len(ok_status):
+        return
+
+    # sort by week
+    in_progress_d = defaultdict(list)
+    for pr in in_progress:
+        # when was the last commit
+        commit_events = [x for x in pr.as_issue().get_timeline() if x.event == "committed"]
+        last_commit = commit_events[-1]
+        try:
+            dt = last_commit.raw_data["author"]["date"]
+            dt = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%SZ")
+            week = dt.isocalendar()[1]
+            update_week = pr.updated_at.isocalendar()[1]
+            in_progress_d[week].append(pr)
+        except Exception as e:
+            _logger.critical(f"Cannot parse commit events for {pr.html_url}: {e}")
+
+    # sort
+    sort_by = sort_by or 'closed_at'
+    ok_status.sort(key=lambda x: getattr(x[1], sort_by), reverse=True)
+    last_week_n = -1
+    with open(output_md, "w+", encoding="utf-8") as fout:
+        fout.write(f"# Hours of all issues (generated at {_ts})\n\n")
+
+        for eta, pr in ok_status:
+            cal = getattr(pr, sort_by).isocalendar()
+            this_week_n = cal[1]
+            if last_week_n != this_week_n:
+
+                # print out in progress last week
+                for pr_prg in in_progress_d[last_week_n]:
+                    r = pr_to_md_hours(pr_prg, None, last_week_n)
+                    fout.write(f"{str(r)}\n")
+
+                # print new header
+                d = f"{cal[0]}-W{this_week_n:02d}"
+                monday = datetime.strptime(d + '-1', "%Y-W%W-%w")
+                sunday = monday + timedelta(days=6)
+                fout.write(f"\n\n## {cal[0]}: week #{this_week_n:02d} - {monday.date()} - {sunday.date()}\n\n")
+                last_week_n = this_week_n
+                fout.write(f"{hours_row.header}\n")
+                fout.write(f"{hours_row.header_sep}\n")
+
+            # print closed issue
+            r = pr_to_md_hours(pr, eta, last_week_n)
+            fout.write(f"{str(r)}\n")
 
 
 def store(gh, out_file):
@@ -502,7 +692,7 @@ def store(gh, out_file):
     }
     for repo_name, pr in pr_with_eta(gh, settings["start_time"], state="all"):
         pr_id = get_pr_id(repo_name, pr)
-        eta_lines = parse_eta_lines(pr)
+        eta_lines, _1 = parse_eta_lines(pr)
         if 0 == len(eta_lines):
             _logger.critical("No ETA for [%s]", pr_id)
             continue
@@ -521,14 +711,23 @@ def store(gh, out_file):
         json.dump(d, fout, sort_keys=True, indent=2)
 
 
+def get_output_file(output_d: str, ts, file_str: str):
+    """ Get output file name. """
+    if not os.path.exists(output_d):
+        os.makedirs(output_d)
+    return os.path.join(output_d, f"{ts}.{file_str}")
+
+
 # =================
 
 if __name__ == '__main__':
+    UNSPECIFIED = object()
+
     parser = argparse.ArgumentParser(description='Github Helper Tools')
     parser.add_argument(
         '--eta-cust', help='Print customer ETA for these issues', type=str, required=False)
     parser.add_argument(
-        '--hours', help='Print hours for these issues', type=str, required=False)
+        '--hours', help='Print hours for these issues', type=str, default=UNSPECIFIED, required=False, nargs='?')
     parser.add_argument(
         '--list', help='List all issues with ETA', action="store_true", required=False)
     parser.add_argument(
@@ -545,13 +744,16 @@ if __name__ == '__main__':
         '--input-pr-id', help='Input are pr ids not description', action="store_true", required=False)
     parser.add_argument(
         '--settings', help='Input settings json file', required=False, default="settings.json")
+    parser.add_argument(
+        '--check-last', help='Check last N weeks .e.g, `4w`', required=False)
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
 
     gh_key = "GITHUB_PAT"
     if gh_key not in os.environ:
-        _logger.critical("Cannot find [%s]", )
+        _logger.critical(f"Cannot find [{gh_key}] in env")
+        sys.exit(1)
 
     # load settings
     settings_file = os.path.join(_this_dir, flags.settings)
@@ -559,6 +761,17 @@ if __name__ == '__main__':
     settings = load_settings(settings_file)
 
     gh = Github(os.environ[gh_key])
+
+    if flags.check_last:
+        rec = re.compile(r"^(\d+)w$")
+        m = rec.match(flags.check_last)
+        if m:
+            since = datetime.now() - timedelta(weeks=int(m.group(1)))
+            settings["start_time"] = since
+        else:
+            _logger.critical("Unknown format f{flags.check_last}")
+            sys.exit(1)
+        _logger.info(f"Valid issues/PRs since {settings['start_time']}")
 
     if flags.store:
         if not os.path.exists(settings["state_dir"]):
@@ -568,14 +781,23 @@ if __name__ == '__main__':
         sys.exit(0)
 
     if flags.validate:
-        validate(gh, state=flags.state, sort_by=flags.sort)
+        start_date = settings["start_time"]
+        validate(gh, start_date, state=flags.state, sort_by=flags.sort)
         sys.exit(0)
 
     if flags.eta_cust is not None:
         find_cust_est(gh, flags.eta_cust.split(","), flags.state)
         sys.exit(0)
 
-    if flags.hours is not None:
+    # iterate and show hours for all PRs conforming to the input
+    if flags.hours is None:
+        # output_f = get_output_file(settings["result_dir"], _ts, "hours.md")
+        output_f = get_output_file(settings["result_dir"], "", "hours.md")
+        start_date = settings["start_time"]
+        find_hours_all(gh, start_date, state=flags.state, sort_by=flags.sort, output_md=output_f)
+        sys.exit(0)
+
+    if isinstance(flags.hours, str):
         find_hours(gh, flags.hours.split(","), flags.input_pr_id)
         sys.exit(0)
 
