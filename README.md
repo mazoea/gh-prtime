@@ -40,6 +40,12 @@ python prtime.py --validate --state=closed
 python prtime.py --validate --state=closed --sort=merged_at
 ```
 
+## Store checkpoint ETAs
+
+```
+python prtime.py --checkpoint
+```
+
 # Other projects
 
 ```

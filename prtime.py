@@ -17,12 +17,14 @@ import argparse
 import re
 import glob
 import json
+import typing
+
 import tqdm
 from pprint import pformat
 from collections import defaultdict, OrderedDict
 from github import Github
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 _ts = datetime.now().strftime("%Y_%m_%d__%H.%M.%S")
 _logger = logging.getLogger()
@@ -298,7 +300,7 @@ def parse_eta_lines(pr) -> tuple:
     return l_arr, ignored
 
 
-def parse_eta(pr, pr_id):
+def parse_eta(pr, pr_id) -> typing.Optional[eta_table]:
     """
 | Phases            | JH  |  JP  | TM |   JM | Total  |
 |-----------------|----:|----:|-----:|-----:|-------:|
@@ -578,6 +580,64 @@ class hours_row(object):
         return s + "|"
 
 
+def was_updated(pr, since=None, update_events=None):
+    update_events = update_events or ("committed", )
+    # when was the last commit
+    updated = [x for x in pr.as_issue().get_timeline() if x.event in update_events]
+    if len(updated) == 0:
+        return False, -1
+
+    last_update = updated[-1]
+    try:
+        if last_update.created_at is not None:
+            dt = last_update.created_at
+        else:
+            dt = last_update.raw_data["author"]["date"]
+            dt = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%SZ")
+        week = dt.isocalendar()[1]
+        if since is None:
+            return True, week
+        return since <= dt.date(), week
+
+    except Exception as e:
+        _logger.critical(f"Cannot parse commit events for {pr.html_url}: {e}")
+    return False, -1
+
+
+def store_checkpoint(gh, start_date: datetime, dry=False):
+    """
+        Find ETA, check if in the last week there was an update, if so, store the checkpoint.
+    """
+    today = date.today()
+    monday = today + timedelta(days=-today.weekday(), weeks=0)
+    _logger.info(f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
+
+    stale = []
+    for repo_name, pr in pr_with_eta(gh, start_date, state="open"):
+        pr_id = get_pr_id(repo_name, pr)
+        eta = parse_eta(pr, pr_id)
+        if eta is None:
+            _logger.info(f"No ETA for [{pr_id}] [{pr.html_url}]")
+            continue
+
+        updated, _1 = was_updated(pr, since=monday, update_events=("committed", "commented"))
+        if updated:
+            # add new checkpoint
+            body = f"""<details><summary>ETA checkpoint [{monday}]-[{today}]</summary>
+{json.dumps(eta.d, indent=2)}
+</details>"""
+            _logger.info(f"Checkpoint for [{pr_id}] [{pr.html_url}]")
+            if dry:
+                continue
+            pr.as_issue().create_comment(body)
+        else:
+            stale.append((pr_id, pr.html_url))
+
+    _logger.info("=====")
+    for pr_id, html_url in stale:
+        _logger.info(f"Issue not updated lately!: [{pr_id}] [{html_url}]")
+
+
 def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None, output_md: str = None):
     """
         Show hours of all specified issues.
@@ -642,16 +702,11 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
     in_progress_d = defaultdict(list)
     for pr in in_progress:
         # when was the last commit
-        commit_events = [x for x in pr.as_issue().get_timeline() if x.event == "committed"]
-        last_commit = commit_events[-1]
-        try:
-            dt = last_commit.raw_data["author"]["date"]
-            dt = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%SZ")
-            week = dt.isocalendar()[1]
-            update_week = pr.updated_at.isocalendar()[1]
+        updated, week = was_updated(pr)
+        if updated:
             in_progress_d[week].append(pr)
-        except Exception as e:
-            _logger.critical(f"Cannot parse commit events for {pr.html_url}: {e}")
+        else:
+            _logger.info(f"PR {pr.html_url} not updated in the last week")
 
     # sort
     sort_by = sort_by or 'closed_at'
@@ -746,6 +801,8 @@ if __name__ == '__main__':
         '--settings', help='Input settings json file', required=False, default="settings.json")
     parser.add_argument(
         '--check-last', help='Check last N weeks .e.g, `4w`', required=False)
+    parser.add_argument(
+        '--checkpoint', help='Add new comment with a checkpoint of hours', required=False, action="store_true")
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -787,6 +844,12 @@ if __name__ == '__main__':
 
     if flags.eta_cust is not None:
         find_cust_est(gh, flags.eta_cust.split(","), flags.state)
+        sys.exit(0)
+
+    # store hours
+    if flags.checkpoint:
+        start_date = settings["start_time"]
+        store_checkpoint(gh, start_date)
         sys.exit(0)
 
     # iterate and show hours for all PRs conforming to the input
