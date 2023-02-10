@@ -803,6 +803,8 @@ if __name__ == '__main__':
         '--check-last', help='Check last N weeks .e.g, `4w`', required=False)
     parser.add_argument(
         '--checkpoint', help='Add new comment with a checkpoint of hours', required=False, action="store_true")
+    parser.add_argument(
+        '--dry-run', help='Do not change (valid for --checkpoint)', required=False, action="store_true")
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -849,7 +851,7 @@ if __name__ == '__main__':
     # store hours
     if flags.checkpoint:
         start_date = settings["start_time"]
-        store_checkpoint(gh, start_date)
+        store_checkpoint(gh, start_date, dry=flags.dry_run)
         sys.exit(0)
 
     # iterate and show hours for all PRs conforming to the input
