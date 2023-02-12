@@ -18,6 +18,7 @@ import re
 import glob
 import json
 import typing
+import shutil
 
 import tqdm
 from pprint import pformat
@@ -804,7 +805,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--checkpoint', help='Add new comment with a checkpoint of hours', required=False, action="store_true")
     parser.add_argument(
-        '--dry-run', help='Do not change (valid for --checkpoint)', required=False, action="store_true")
+        '--dry-run', help='Do not make any changes (valid for --checkpoint)', required=False, action="store_true")
+    parser.add_argument(
+        '--output-file', help='Output file (valid for --hours)', required=False, default=None, type=str)
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -856,10 +859,14 @@ if __name__ == '__main__':
 
     # iterate and show hours for all PRs conforming to the input
     if flags.hours is None:
-        # output_f = get_output_file(settings["result_dir"], _ts, "hours.md")
-        output_f = get_output_file(settings["result_dir"], "", "hours.md")
+        if flags.output_file is not None:
+            output_f = flags.output_file
+        else:
+            output_f = get_output_file(settings["result_dir"], _ts, "hours.md")
         start_date = settings["start_time"]
         find_hours_all(gh, start_date, state=flags.state, sort_by=flags.sort, output_md=output_f)
+        if os.path.exists(output_f):
+            shutil.copy(output_f, os.path.join(settings["result_dir"], "hours.md"))
         sys.exit(0)
 
     if isinstance(flags.hours, str):
