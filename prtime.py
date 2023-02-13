@@ -578,6 +578,8 @@ class hours_row(object):
     def __str__(self):
         s = ""
         for k, v in self._d.items():
+            if isinstance(v, float):
+                v = f"{v}".replace(".", ",")
             s += f"| {v} "
         return s + "|"
 
