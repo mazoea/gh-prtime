@@ -619,7 +619,10 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
         Find ETA, check if in the last week there was an update, if so, store the checkpoint.
     """
     today = date.today()
-    monday = today + timedelta(days=-today.weekday(), weeks=0)
+    # if it is Monday, then we need to check the previous week
+    # `0` == Monday
+    weeks = 0 if today.weekday() != 0 else -1
+    monday = today + timedelta(days=-today.weekday(), weeks=weeks)
     _logger.info(f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
 
     stale = []
