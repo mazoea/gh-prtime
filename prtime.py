@@ -442,7 +442,7 @@ def parse_eta(pr, pr_id) -> typing.Optional[eta_table]:
     return eta
 
 
-def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None):
+def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, include_issues: bool = False):
     """
     state: "all", "closed"
     """
@@ -452,6 +452,16 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None):
     for p, ignored_pr in settings["projects"]:
         repo = gh.get_repo(p)
         _logger.info(repo.name)
+        if include_issues:
+            issues = repo.get_issues(state='all', sort='created', direction="desc", labels=["ETA"])
+            _logger.info("Total ISSUES count: [%d]", issues.totalCount)
+            for issue in tqdm.tqdm(issues, total=issues.totalCount):
+                if issue.created_at < start_at:
+                    break
+                if rec_pr_time.search(issue.body or "") is None:
+                    continue
+                yield repo.name, issue
+
         pulls = repo.get_pulls(state=state or 'all', sort='created',
                                direction="desc", base=base or settings["base"])
         _logger.info("Total PR count: [%d]", pulls.totalCount)
@@ -603,16 +613,16 @@ def find_hours(gh, input_arr, input_are_ids):
 def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
     ok_status = []
 
-    for repo_name, pr in pr_with_eta(gh, start_date, state=state):
-        pr_id = get_pr_id(repo_name, pr)
-        eta = parse_eta(pr, pr_id)
+    for repo_name, pr_or_issue in pr_with_eta(gh, start_date, state=state, include_issues=True):
+        pr_id = get_pr_id(repo_name, pr_or_issue)
+        eta = parse_eta(pr_or_issue, pr_id)
         if eta is None:
             continue
 
-        valid, _1 = eta.validate_hours(pr)
+        valid, _1 = eta.validate_hours(pr_or_issue)
         if valid:
             msg = "Issue [%-70s] is OK" % (eta.pr_id,)
-            ok_status.append((msg, pr))
+            ok_status.append((msg, pr_or_issue))
         else:
             _logger.error(f"PROBLEM: Issue [{eta.pr_id:70s}] has issues!!!")
 
@@ -634,11 +644,15 @@ def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
         _logger.info(msg, getattr(pr, sort_by))
 
 
-
-def was_updated(pr, since=None, update_events=None):
+def was_updated(pr_or_issue, since=None, update_events=None):
     update_events = update_events or ("committed", )
     # when was the last commit
-    updated = [x for x in pr.as_issue().get_timeline() if x.event in update_events]
+    issue = pr_or_issue
+    try:
+        issue = pr_or_issue.as_issue()
+    except:
+        pass
+    updated = [x for x in issue.get_timeline() if x.event in update_events]
     if len(updated) == 0:
         return False, -1
 
@@ -703,7 +717,7 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
     ok_status = []
     in_progress = []
 
-    for repo_name, pr in pr_with_eta(gh, start_date, state="all"):
+    for repo_name, pr in pr_with_eta(gh, start_date, state="all", include_issues=True):
         pr_id = get_pr_id(repo_name, pr)
         if pr.state != state:
             if pr.state == "open":
@@ -730,7 +744,7 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
         if updated:
             in_progress_d[week].append(eta)
         else:
-            _logger.info(f"PR {eta.pr.html_url} not updated in the last week")
+            _logger.info(f"PR/ISSUE {eta.pr.html_url} not updated in the last week")
 
     # sort
     sort_by = sort_by or 'closed_at'
