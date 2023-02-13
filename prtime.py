@@ -87,14 +87,14 @@ def log_err(msg, pr, pr_id):
     _logger.info(tmpl, msg, pr_id, pr.html_url)
 
 
-def sum_hours(s, pr_id):
+def sum_hours(s, pr_id, pr_html=None):
     """
         Try to sum the cell.
     """
     try:
         return float(eval(s))
     except:
-        _logger.info("Cannot parse [%s] in [%s]", s, pr_id)
+        _logger.info(f"Cannot parse [{s}] in [{pr_id}] [{pr_html or ''}]")
     return -1.
 
 
@@ -107,9 +107,10 @@ class eta_row:
         Row of an ETA
     """
 
-    def __init__(self, arr, pr_id):
+    def __init__(self, arr, pr_id, pr_html=None):
         self.arr = arr
         self.pr_id = pr_id
+        self.pr_html = pr_html
 
     @property
     def name(self): return self.arr[1]
@@ -118,7 +119,7 @@ class eta_row:
     def total(self): return self.arr[-2]
 
     @property
-    def dev_hours(self): return [sum_hours(x, self.pr_id) for x in self.arr[2:-2]]
+    def dev_hours(self): return [sum_hours(x, self.pr_id, self.pr_html) for x in self.arr[2:-2]]
 
     @property
     def dev_names(self): return self.arr[2:-2]
@@ -131,7 +132,7 @@ class eta_table:
     def __init__(self, pr, pr_id, cols):
         self.pr = pr
         self.pr_id = pr_id
-        self.rows = [eta_row(x, pr_id) for x in cols]
+        self.rows = [eta_row(x, pr_id, pr.html_url) for x in cols]
         self._valid = self._validate_keys()
         if not self._valid:
             return
@@ -348,7 +349,7 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None):
         pulls = repo.get_pulls(state=state or 'all', sort='created',
                                direction="desc", base=base or settings["base"])
         _logger.info("Total PR count: [%d]", pulls.totalCount)
-        for pr in tqdm.tqdm(pulls):
+        for pr in tqdm.tqdm(pulls, total=pulls.totalCount):
             if pr.number in ignored_pr:
                 continue
 
@@ -866,6 +867,8 @@ if __name__ == '__main__':
         start_date = settings["start_time"]
         find_hours_all(gh, start_date, state=flags.state, sort_by=flags.sort, output_md=output_f)
         if os.path.exists(output_f):
+            if not os.path.exists(settings["result_dir"]):
+                os.makedirs(settings["result_dir"])
             shutil.copy(output_f, os.path.join(settings["result_dir"], "hours.md"))
         sys.exit(0)
 
