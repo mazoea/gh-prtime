@@ -241,17 +241,23 @@ class eta_table:
     def validate_hours(self, pr=None):
         errors = []
         valid = True
+        html_url = pr.html_url if pr is not None else ""
 
         def _add_error(s: str): errors.append("%s%s" % (eta_table.label_prefix, s))
 
+        def _err_msg(s: str):
+            return f"{s} in [{self.pr_id}]\n\t->[{html_url}]"
+
         if self.total_reported == 0:
-            _logger.critical("Total reported is 0!")
+            msg = f"Total reported is 0!"
+            _logger.critical(_err_msg(msg))
             _add_error("total_is_0")
             valid = False
-        if self.cust_est == 0:
-            _logger.critical("Customer ETA is 0!")
-            _add_error("cust_is_0")
-            valid = False
+        # if self.cust_est == 0:
+        #     msg = f"Customer ETA is 0!"
+        #     _logger.critical(_err_msg(msg))
+        #     _add_error("cust_is_0")
+        #     valid = False
 
         calc_stage_totals = defaultdict(int)
         for stage in ETA.stages:
@@ -259,19 +265,17 @@ class eta_table:
                 calc_stage_totals[stage] += hours[stage]
         stage_totals = self.stage_totals
 
-        html_url = pr.html_url if pr is not None else ""
-
         for stage in ETA.stages:
             if stage_totals[stage] != calc_stage_totals[stage]:
-                _logger.critical("Check stage totals: stage [%s]=[%s], NOT [%s] in [%s]\n\t->[%s]",
-                                 stage, calc_stage_totals[stage], stage_totals[stage], self.pr_id, html_url)
+                msg = f"Check stage totals: stage [{stage}]=[{calc_stage_totals[stage]}], NOT [{stage_totals[stage]}]"
+                _logger.critical(_err_msg(msg))
                 valid = False
                 _add_error("stage_%s" % stage)
 
         calc_total_reported = sum(stage_totals.values())
         if calc_total_reported != self.total_reported:
-            _logger.critical("Check totals: =[%s], NOT [%s] in [%s]\n\t->[%s]",
-                             self.total_reported, calc_total_reported, self.pr_id, html_url)
+            msg = f"Check totals: =[{self.total_reported}], NOT [{calc_total_reported}]"
+            _logger.critical(_err_msg(msg))
             valid = False
             _add_error("totals")
 
@@ -503,10 +507,12 @@ def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
         if eta is None:
             continue
 
-        err, _1 = eta.validate_hours(pr)
-        if not err:
+        valid, _1 = eta.validate_hours(pr)
+        if valid:
             msg = "Issue [%-70s] is OK" % (eta.pr_id,)
             ok_status.append((msg, pr))
+        else:
+            _logger.error(f"PROBLEM: Issue [{eta.pr_id:70s}] has issues!!!")
 
     if 0 == len(ok_status):
         return
