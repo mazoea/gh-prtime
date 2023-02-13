@@ -102,6 +102,64 @@ def get_pr_id(repo_name, pr):
     return "%s:%s:%s" % (repo_name, pr.number, pr.title)
 
 
+class hours_row(object):
+    h_week = "#Week"
+    h_customer = "Cust"
+    h_issue = "Issue"
+    h_link_gh = "Link GH"
+    h_link_jira = "Link JIRA"
+    h_state = "State"
+    h_tracked = "Tracked"
+    h_eta = "ETA"
+    h_eta_cust = "ETA Cust"
+    h_closed = "Closed"
+    h_phase_eta = "Phase ETA"
+    h_phase_dev = "Phase Dev"
+    h_phase_review = "Phase Review"
+    h_phase_total = "Phase Total"
+    h_dev_total = "Dev Total"
+    h_dev_jh = "Dev JH"
+    h_dev_jp = "Dev JP"
+    h_dev_tm = "Dev TM"
+    h_dev_others = "Dev Others"
+
+    h_spec = (
+        h_week, h_customer, h_issue, h_link_gh, h_link_jira, h_state, h_tracked, h_eta, h_eta_cust,
+        h_phase_eta, h_phase_dev, h_phase_review, h_phase_total, h_dev_total,
+        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others, h_closed
+    )
+    header = "|" + ("|".join([f" {x:10s} " for x in h_spec]))[1:] + " |"
+    header_len = header.count("|") - 1
+    header_sep = header_len * ("| %10s " % "----:") + " |"
+
+    def __init__(self):
+        self._d = OrderedDict()
+        for k in self.h_spec:
+            self._d[k] = ""
+
+    def __getitem__(self, k): return self._d[k]
+    def __setitem__(self, k, v): self._d[k] = v
+
+    def dev(self, key, value):
+        exp_k = f"Dev {key}"
+        for k in self._d.keys():
+            if k == exp_k:
+                self._d[k] = value
+                return
+        if self._d[self.h_dev_others] == "":
+            self._d[self.h_dev_others] = value
+        else:
+            self._d[self.h_dev_others] += value
+
+    def __str__(self):
+        s = ""
+        for k, v in self._d.items():
+            if isinstance(v, float):
+                v = f"{v}"
+            s += f"| {v} "
+        return s + "|"
+
+
 class eta_row:
     """
         Row of an ETA
@@ -280,6 +338,50 @@ class eta_table:
             _add_error("totals")
 
         return valid, errors
+
+    def md_hours(self, this_week_n, in_progress: bool = False) -> hours_row:
+        """
+            Return filled out `hours_row`
+        """
+        pr = self.pr
+        eta = self
+
+        r = hours_row()
+        r[r.h_week] = this_week_n
+        r[r.h_customer] = "internal"
+        r[r.h_issue] = f"{'/'.join(pr.html_url.split('/')[-3:])}:{pr.title}"
+        r[r.h_link_gh] = pr.html_url
+        r[r.h_state] = pr.state
+        r[r.h_closed] = pr.closed_at
+
+        r[r.h_eta] = eta.est
+        r[r.h_eta_cust] = eta.cust_est
+
+        dev_total = 0
+        for dev, hours in eta.dev_hours.items():
+            t = sum(hours.values())
+            r.dev(dev, t)
+            dev_total += t
+
+        # fill out phases when closed
+        if in_progress is False:
+            p0, p1, p2 = \
+                eta.stage_totals[ETA.stages[0]], \
+                eta.stage_totals[ETA.stages[1]], \
+                eta.stage_totals[ETA.stages[2]]
+            r[r.h_phase_eta] = p0
+            r[r.h_phase_dev] = p1
+            r[r.h_phase_review] = p2
+            r[r.h_phase_total] = p0 + p1 + p2
+            r[r.h_dev_total] = dev_total
+
+        rec = re.compile(r"jira\D?(\d+)", re.IGNORECASE)
+        m = rec.search(r[r.h_issue])
+        if m:
+            r[r.h_link_jira] = f"https://adventhp.atlassian.net/browse/OCR-{m.group(1)}"
+            r[r.h_customer] = "advent"
+
+        return r
 
 
 def parse_eta_lines(pr) -> tuple:
@@ -532,63 +634,6 @@ def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
         _logger.info(msg, getattr(pr, sort_by))
 
 
-class hours_row(object):
-    h_week = "#Week"
-    h_customer = "Cust"
-    h_issue = "Issue"
-    h_link_gh = "Link GH"
-    h_link_jira = "Link JIRA"
-    h_state = "State"
-    h_tracked = "Tracked"
-    h_eta = "ETA"
-    h_eta_cust = "ETA Cust"
-    h_closed = "Closed"
-    h_phase_eta = "Phase ETA"
-    h_phase_dev = "Phase Dev"
-    h_phase_review = "Phase Review"
-    h_phase_total = "Phase Total"
-    h_dev_total = "Dev Total"
-    h_dev_jh = "Dev JH"
-    h_dev_jp = "Dev JP"
-    h_dev_tm = "Dev TM"
-    h_dev_others = "Dev Others"
-
-    h_spec = (
-        h_week, h_customer, h_issue, h_link_gh, h_link_jira, h_state, h_tracked, h_eta, h_eta_cust, h_closed,
-        h_phase_eta, h_phase_dev, h_phase_review, h_phase_total, h_dev_total,
-        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others
-    )
-    header = "|" + ("|".join([f" {x:10s} " for x in h_spec]))[1:] + " |"
-    header_len = header.count("|") - 1
-    header_sep = header_len * ("| %10s " % "----:") + " |"
-
-    def __init__(self):
-        self._d = OrderedDict()
-        for k in self.h_spec:
-            self._d[k] = ""
-
-    def __getitem__(self, k): return self._d[k]
-    def __setitem__(self, k, v): self._d[k] = v
-
-    def dev(self, key, value):
-        exp_k = f"Dev {key}"
-        for k in self._d.keys():
-            if k == exp_k:
-                self._d[k] = value
-                return
-        if self._d[self.h_dev_others] == "":
-            self._d[self.h_dev_others] = value
-        else:
-            self._d[self.h_dev_others] += value
-
-    def __str__(self):
-        s = ""
-        for k, v in self._d.items():
-            if isinstance(v, float):
-                v = f"{v}".replace(".", ",")
-            s += f"| {v} "
-        return s + "|"
-
 
 def was_updated(pr, since=None, update_events=None):
     update_events = update_events or ("committed", )
@@ -658,84 +703,51 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
     ok_status = []
     in_progress = []
 
-    def pr_to_md_hours(pr, eta, this_week_n):
-        r = hours_row()
-        r[r.h_week] = this_week_n
-        r[r.h_customer] = "internal"
-        r[r.h_issue] = f"{'/'.join(pr.html_url.split('/')[-3:])}:{pr.title}"
-        r[r.h_link_gh] = pr.html_url
-        r[r.h_state] = pr.state
-        r[r.h_closed] = pr.closed_at
-
-        if pr.state == "closed":
-            assert eta is not None
-            r[r.h_eta] = eta.est
-            r[r.h_eta_cust] = eta.cust_est
-
-            p0, p1, p2 = \
-                eta.stage_totals[ETA.stages[0]], \
-                eta.stage_totals[ETA.stages[1]], \
-                eta.stage_totals[ETA.stages[2]]
-            r[r.h_phase_eta] = p0
-            r[r.h_phase_dev] = p1
-            r[r.h_phase_review] = p2
-            r[r.h_phase_total] = p0 + p1 + p2
-
-            dev_total = 0
-            for dev, hours in eta.dev_hours.items():
-                t = sum(hours.values())
-                r.dev(dev, t)
-                dev_total += t
-            r[r.h_dev_total] = dev_total
-
-        rec = re.compile(r"jira\D?(\d+)", re.IGNORECASE)
-        m = rec.search(r[r.h_issue])
-        if m:
-            r[r.h_link_jira] = f"https://adventhp.atlassian.net/browse/OCR-{m.group(1)}"
-            r[r.h_customer] = "advent"
-
-        return r
-
     for repo_name, pr in pr_with_eta(gh, start_date, state="all"):
+        pr_id = get_pr_id(repo_name, pr)
         if pr.state != state:
             if pr.state == "open":
-                in_progress.append(pr)
+                eta = parse_eta(pr, pr_id)
+                if eta is None:
+                    _logger.critical(f"Cannot parse ETA for {pr_id} {pr.html_url}")
+                    continue
+                in_progress.append(eta)
             continue
 
-        pr_id = get_pr_id(repo_name, pr)
         eta = parse_eta(pr, pr_id)
         if eta is None:
             continue
-        ok_status.append((eta, pr))
+        ok_status.append(eta)
 
     if 0 == len(ok_status):
         return
 
     # sort by week
     in_progress_d = defaultdict(list)
-    for pr in in_progress:
+    for eta in in_progress:
         # when was the last commit
-        updated, week = was_updated(pr)
+        updated, week = was_updated(eta.pr)
         if updated:
-            in_progress_d[week].append(pr)
+            in_progress_d[week].append(eta)
         else:
-            _logger.info(f"PR {pr.html_url} not updated in the last week")
+            _logger.info(f"PR {eta.pr.html_url} not updated in the last week")
 
     # sort
     sort_by = sort_by or 'closed_at'
-    ok_status.sort(key=lambda x: getattr(x[1], sort_by), reverse=True)
+    ok_status.sort(key=lambda x: getattr(x.pr, sort_by), reverse=True)
     last_week_n = -1
     with open(output_md, "w+", encoding="utf-8") as fout:
         fout.write(f"# Hours of all issues (generated at {_ts})\n\n")
 
-        for eta, pr in ok_status:
+        for eta in ok_status:
+            pr = eta.pr
             cal = getattr(pr, sort_by).isocalendar()
             this_week_n = cal[1]
             if last_week_n != this_week_n:
 
                 # print out in progress last week
-                for pr_prg in in_progress_d[last_week_n]:
-                    r = pr_to_md_hours(pr_prg, None, last_week_n)
+                for eta_prg in in_progress_d[last_week_n]:
+                    r = eta_prg.md_hours(last_week_n, in_progress=True)
                     fout.write(f"{str(r)}\n")
 
                 # print new header
@@ -748,7 +760,7 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
                 fout.write(f"{hours_row.header_sep}\n")
 
             # print closed issue
-            r = pr_to_md_hours(pr, eta, last_week_n)
+            r = eta.md_hours(last_week_n)
             fout.write(f"{str(r)}\n")
 
 
