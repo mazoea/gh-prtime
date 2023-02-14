@@ -1,5 +1,5 @@
 """
-https://pygithub.readthedocs.io/en/latest/examples.html
+ETA parser for github issues/PRs.
 
 | Phases            | JH  |  JP  | TM |   JM | Total  |
 |-----------------|----:|----:|-----:|-----:|-------:|
@@ -68,6 +68,20 @@ def load_settings(file_str: str):
 
 settings = {}
 
+
+# =================
+
+def prev_monday(force_prev=True) -> datetime:
+    """
+        `force_prev` - if today is monday, return last monday
+    """
+    today = datetime.today()
+    if force_prev:
+        weeks = 0 if today.weekday() != 0 else -1
+    else:
+        weeks = 0
+    monday = today + timedelta(days=-today.weekday(), weeks=weeks)
+    return monday
 
 # =================
 
@@ -442,6 +456,25 @@ def parse_eta(pr, pr_id) -> typing.Optional[eta_table]:
     return eta
 
 
+def parse_checkpoint_eta(pr, around_date) -> dict:
+    rec = re.compile(r"/summary>\s*(.*)\s*</details", re.M)
+    comments = pr.get_issue_comments()
+    for c in comments:
+        diff_days = (c.created_at.date() - around_date).days
+        if abs(diff_days) > 1:
+            continue
+        if "ETA checkpoint" in c.body:
+            s = " ".join(c.body.splitlines())
+            m = rec.search(s)
+            if m is not None:
+                d = json.loads(m.group(1))
+                return d
+            else:
+                _logger.critical(f"Cannot parse ETA comments [{c.body}] in {pr.html_url}")
+                return None
+    return None
+
+
 def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, include_issues: bool = False):
     """
     state: "all", "closed"
@@ -650,7 +683,7 @@ def was_updated(pr_or_issue, since=None, update_events=None):
     issue = pr_or_issue
     try:
         issue = pr_or_issue.as_issue()
-    except:
+    except Exception as e:
         pass
     updated = [x for x in issue.get_timeline() if x.event in update_events]
     if len(updated) == 0:
@@ -677,11 +710,8 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
     """
         Find ETA, check if in the last week there was an update, if so, store the checkpoint.
     """
-    today = date.today()
-    # if it is Monday, then we need to check the previous week
-    # `0` == Monday
-    weeks = 0 if today.weekday() != 0 else -1
-    monday = today + timedelta(days=-today.weekday(), weeks=weeks)
+    today = datetime.today()
+    monday = prev_monday()
     _logger.info(f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
 
     stale = []
@@ -846,6 +876,8 @@ if __name__ == '__main__':
         '--dry-run', help='Do not make any changes (valid for --checkpoint)', required=False, action="store_true")
     parser.add_argument(
         '--output-file', help='Output file (valid for --hours)', required=False, default=None, type=str)
+    parser.add_argument(
+        '--week-progress', help='For debugging - test weekly progress', required=False, action="store_true")
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -939,3 +971,39 @@ if __name__ == '__main__':
                 str(pr),
                 pr.html_url
             )
+
+    if flags.week_progress:
+        monday = prev_monday(False).date()
+        for repo_name, pr in pr_with_eta(gh, settings["start_time"], state="open", include_issues=True):
+            updated, _1 = was_updated(pr, since=monday, update_events=("committed", "commented"))
+            if not updated:
+                continue
+            pr_id = get_pr_id(repo_name, pr)
+            eta = parse_eta(pr, pr_id)
+            if eta is None:
+                log_err("Cannot parse", pr, pr_id)
+                continue
+
+            orig_row = None
+            if pr.created_at.date() < monday:
+                checkpoint_eta_d = parse_checkpoint_eta(pr, monday)
+                if checkpoint_eta_d is None:
+                    _logger.info(f"Should have had ETA checkpoint {pr_id} -> [{pr.html_url}]")
+                    continue
+
+                orig_row = eta.md_hours(-1, in_progress=True)
+                dev_hours_k = "dev_hours"
+                checkpoint_dev_hours = checkpoint_eta_d[dev_hours_k]
+                for dev, hours_d in eta._d[dev_hours_k].items():
+                    for stage, hours in hours_d.items():
+                        if hours > 0. and checkpoint_dev_hours[dev][stage] > 0.:
+                            hours_d[stage] -= checkpoint_dev_hours[dev][stage]
+                            used_checkpoint = True
+
+            r = eta.md_hours(-1, in_progress=True)
+            msg = f"{pr_id} -> [{pr.html_url}]\n{hours_row.header}\n"
+            if orig_row is not None:
+                msg += f"{str(orig_row)}\n"
+            msg += f"{str(r)}\n"
+            _logger.info(msg)
+
