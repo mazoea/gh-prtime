@@ -191,7 +191,8 @@ class eta_row:
     def total(self): return self.arr[-2]
 
     @property
-    def dev_hours(self): return [sum_hours(x, self.pr_id, self.pr_html) for x in self.arr[2:-2]]
+    def dev_hours(self): return [sum_hours(
+        x, self.pr_id, self.pr_html) for x in self.arr[2:-2]]
 
     @property
     def dev_names(self): return self.arr[2:-2]
@@ -204,12 +205,22 @@ class eta_table:
     def __init__(self, pr, pr_id, cols):
         self.pr = pr
         self.pr_id = pr_id
-        self.rows = [eta_row(x, pr_id, pr.html_url) for x in cols]
-        self._valid = self._validate_keys()
+        self.rows = []
+        self._valid = False
+        if len(cols) > 0:
+            self.rows = [eta_row(x, pr_id, pr.html_url) for x in cols]
+            self._valid = self._validate_keys()
         if not self._valid:
             return
         self._d = self._parse()
         self._valid = self._d is not None
+
+    def copy(self):
+        cp = eta_table(self.pr, self.pr_id, [])
+        cp.rows = self.rows
+        cp._valid = self._valid
+        cp._d = self._d
+        return cp
 
     @property
     def d(self):
@@ -266,7 +277,8 @@ class eta_table:
                 try:
                     stage_totals[stage] = float(row.total)
                 except Exception as e:
-                    _logger.critical(f"Cannot parse stage total [{row.total}] [{stage}] [{self.pr_id}]\n{self.pr}")
+                    _logger.critical(
+                        f"Cannot parse stage total [{row.total}] [{stage}] [{self.pr_id}]\n{self.pr}")
                     raise
                 found = True
                 break
@@ -397,6 +409,25 @@ class eta_table:
 
         return r
 
+    def relative_eta(self, from_monday):
+        if self.pr.created_at.date() >= from_monday:
+            return None
+
+        checkpoint_eta_d = parse_checkpoint_eta(self.pr, from_monday)
+        if checkpoint_eta_d is None:
+            _logger.info(
+                f"Should have had ETA checkpoint {self.pr_id} -> [{self.pr.html_url}]")
+            return None
+
+        rel_eta = self.copy()
+        dev_hours_k = "dev_hours"
+        checkpoint_dev_hours = checkpoint_eta_d[dev_hours_k]
+        for dev, hours_d in rel_eta.dev_hours.items():
+            for stage, hours in hours_d.items():
+                if hours > 0. and checkpoint_dev_hours[dev][stage] > 0.:
+                    hours_d[stage] -= checkpoint_dev_hours[dev][stage]
+        return rel_eta
+
 
 def parse_eta_lines(pr) -> tuple:
     """
@@ -486,7 +517,8 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, inc
         repo = gh.get_repo(p)
         _logger.info(repo.name)
         if include_issues:
-            issues = repo.get_issues(state='all', sort='created', direction="desc", labels=["ETA"])
+            issues = repo.get_issues(state='all', sort='created',
+                                     direction="desc", labels=["ETA"])
             _logger.info("Total ISSUES count: [%d]", issues.totalCount)
             for issue in tqdm.tqdm(issues, total=issues.totalCount):
                 if issue.created_at < start_at:
@@ -712,7 +744,8 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
     """
     today = datetime.today()
     monday = prev_monday()
-    _logger.info(f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
+    _logger.info(
+        f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
 
     stale = []
     for repo_name, pr in pr_with_eta(gh, start_date, state="open"):
@@ -722,7 +755,8 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
             _logger.info(f"No ETA for [{pr_id}] [{pr.html_url}]")
             continue
 
-        updated, _1 = was_updated(pr, since=monday, update_events=("committed", "commented"))
+        updated, _1 = was_updated(
+            pr, since=monday, update_events=("committed", "commented"))
         if updated:
             # add new checkpoint
             body = f"""<details><summary>ETA checkpoint [{monday}]-[{today}]</summary>
@@ -780,6 +814,7 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
     sort_by = sort_by or 'closed_at'
     ok_status.sort(key=lambda x: getattr(x.pr, sort_by), reverse=True)
     last_week_n = -1
+    done_weeks = 0
     with open(output_md, "w+", encoding="utf-8") as fout:
         fout.write(f"# Hours of all issues (generated at {_ts})\n\n")
 
@@ -788,17 +823,28 @@ def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None
             cal = getattr(pr, sort_by).isocalendar()
             this_week_n = cal[1]
             if last_week_n != this_week_n:
-
-                # print out in progress last week
+                # print out in progress
                 for eta_prg in in_progress_d[last_week_n]:
-                    r = eta_prg.md_hours(last_week_n, in_progress=True)
+                    # do relative ETA only for the last one
+                    # NOTE: use monday from previous run
+                    eta_prg_rel = None if done_weeks > 1 else eta_prg.relative_eta(
+                        monday.date())
+                    if eta_prg_rel is None:
+                        eta_prg_rel = eta_prg
+                    else:
+                        _logger.info(
+                            f"Using relative ETA for in progress: {eta_prg.pr_id} {eta_prg.pr.html_url}")
+                    r = eta_prg_rel.md_hours(last_week_n, in_progress=True)
                     fout.write(f"{str(r)}\n")
 
-                # print new header
                 d = f"{cal[0]}-W{this_week_n:02d}"
                 monday = datetime.strptime(d + '-1', "%Y-W%W-%w")
                 sunday = monday + timedelta(days=6)
-                fout.write(f"\n\n## {cal[0]}: week #{this_week_n:02d} - {monday.date()} - {sunday.date()}\n\n")
+
+                done_weeks += 1
+                # print new header
+                fout.write(
+                    f"\n\n## {cal[0]}: week #{this_week_n:02d} - {monday.date()} - {sunday.date()}\n\n")
                 last_week_n = this_week_n
                 fout.write(f"{hours_row.header}\n")
                 fout.write(f"{hours_row.header_sep}\n")
@@ -934,7 +980,8 @@ if __name__ == '__main__':
         else:
             output_f = get_output_file(settings["result_dir"], _ts, "hours.md")
         start_date = settings["start_time"]
-        find_hours_all(gh, start_date, state=flags.state, sort_by=flags.sort, output_md=output_f)
+        find_hours_all(gh, start_date, state=flags.state,
+                       sort_by=flags.sort, output_md=output_f)
         if os.path.exists(output_f):
             if not os.path.exists(settings["result_dir"]):
                 os.makedirs(settings["result_dir"])
@@ -975,7 +1022,8 @@ if __name__ == '__main__':
     if flags.week_progress:
         monday = prev_monday(False).date()
         for repo_name, pr in pr_with_eta(gh, settings["start_time"], state="open", include_issues=True):
-            updated, _1 = was_updated(pr, since=monday, update_events=("committed", "commented"))
+            updated, _1 = was_updated(
+                pr, since=monday, update_events=("committed", "commented"))
             if not updated:
                 continue
             pr_id = get_pr_id(repo_name, pr)
@@ -984,26 +1032,13 @@ if __name__ == '__main__':
                 log_err("Cannot parse", pr, pr_id)
                 continue
 
-            orig_row = None
-            if pr.created_at.date() < monday:
-                checkpoint_eta_d = parse_checkpoint_eta(pr, monday)
-                if checkpoint_eta_d is None:
-                    _logger.info(f"Should have had ETA checkpoint {pr_id} -> [{pr.html_url}]")
-                    continue
-
-                orig_row = eta.md_hours(-1, in_progress=True)
-                dev_hours_k = "dev_hours"
-                checkpoint_dev_hours = checkpoint_eta_d[dev_hours_k]
-                for dev, hours_d in eta._d[dev_hours_k].items():
-                    for stage, hours in hours_d.items():
-                        if hours > 0. and checkpoint_dev_hours[dev][stage] > 0.:
-                            hours_d[stage] -= checkpoint_dev_hours[dev][stage]
-                            used_checkpoint = True
-
-            r = eta.md_hours(-1, in_progress=True)
+            orig_row = eta.md_hours(-1, in_progress=True)
+            eta_rel = eta.relative_eta(monday)
+            r = None
+            if eta_rel is not None:
+                r = eta_rel.md_hours(-1, in_progress=True)
             msg = f"{pr_id} -> [{pr.html_url}]\n{hours_row.header}\n"
-            if orig_row is not None:
-                msg += f"{str(orig_row)}\n"
-            msg += f"{str(r)}\n"
+            msg += f"{str(orig_row)}\n"
+            if r is not None:
+                msg += f"{str(r)}\n"
             _logger.info(msg)
-
