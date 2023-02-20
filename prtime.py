@@ -71,7 +71,7 @@ settings = {}
 
 # =================
 
-def prev_monday(force_prev=True) -> datetime:
+def prev_monday(force_prev=True) -> date:
     """
         `force_prev` - if today is monday, return last monday
     """
@@ -81,7 +81,7 @@ def prev_monday(force_prev=True) -> datetime:
     else:
         weeks = 0
     monday = today + timedelta(days=-today.weekday(), weeks=weeks)
-    return monday
+    return monday.date()
 
 # =================
 
@@ -742,7 +742,7 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
     """
         Find ETA, check if in the last week there was an update, if so, store the checkpoint.
     """
-    today = datetime.today()
+    today = datetime.today().date()
     monday = prev_monday()
     _logger.info(
         f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
@@ -1020,7 +1020,7 @@ if __name__ == '__main__':
             )
 
     if flags.week_progress:
-        monday = prev_monday(False).date()
+        monday = prev_monday(False)
         for repo_name, pr in pr_with_eta(gh, settings["start_time"], state="open", include_issues=True):
             updated, _1 = was_updated(
                 pr, since=monday, update_events=("committed", "commented"))
