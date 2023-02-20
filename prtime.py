@@ -734,7 +734,7 @@ def was_updated(pr_or_issue, since=None, update_events=None):
         return since <= dt.date(), week
 
     except Exception as e:
-        _logger.critical(f"Cannot parse commit events for {pr.html_url}: {e}")
+        _logger.critical(f"Cannot parse commit events for {pr_or_issue.html_url}: {e}")
     return False, -1
 
 
