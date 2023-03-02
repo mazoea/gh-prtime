@@ -96,6 +96,12 @@ class ETA:
 
 # =================
 
+def is_issue(pr):
+    """ Return True if `pr` is an issue (and not a PullRequest). """
+    from github import Issue
+    return isinstance(pr, Issue.Issue)
+
+
 def log_err(msg, pr, pr_id):
     tmpl = "\n" + ("<" * 10) + "\n%s [%s]\n\t->%s\n" + (">" * 10)
     _logger.info(tmpl, msg, pr_id, pr.html_url)
@@ -126,7 +132,6 @@ class hours_row(object):
     h_tracked = "Tracked"
     h_eta = "ETA"
     h_eta_cust = "ETA Cust"
-    h_closed = "Closed"
     h_phase_eta = "Phase ETA"
     h_phase_dev = "Phase Dev"
     h_phase_review = "Phase Review"
@@ -136,11 +141,15 @@ class hours_row(object):
     h_dev_jp = "Dev JP"
     h_dev_tm = "Dev TM"
     h_dev_others = "Dev Others"
+    h_closed = "Closed"
+    h_created = "Created"
+    h_days_open = "Days Opened"
+    h_last_week = "Last Week Total"
 
     h_spec = (
         h_week, h_customer, h_issue, h_link_gh, h_link_jira, h_state, h_tracked, h_eta, h_eta_cust,
         h_phase_eta, h_phase_dev, h_phase_review, h_phase_total, h_dev_total,
-        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others, h_closed
+        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others, h_closed, h_created, h_days_open, h_last_week
     )
     header = "|" + ("|".join([f" {x:10s} " for x in h_spec]))[1:] + " |"
     header_len = header.count("|") - 1
@@ -249,6 +258,12 @@ class eta_table:
     @property
     def stage_totals(self):
         return self._d["stage_totals"]
+
+    def dev_hours_total(self):
+        t = 0
+        for dev, hours in self.dev_hours.items():
+            t += sum(hours.values())
+        return t
 
     def _parse(self):
         d = {}
@@ -379,15 +394,21 @@ class eta_table:
         r[r.h_link_gh] = pr.html_url
         r[r.h_state] = pr.state
         r[r.h_closed] = pr.closed_at
+        r[r.h_created] = pr.created_at
+        total_days = -1
+        if pr.closed_at is not None:
+            try:
+                total_days = (pr.closed_at - pr.created_at).days
+                r[r.h_days_open] = total_days
+            except Exception as e:
+                pass
 
         r[r.h_eta] = eta.est
         r[r.h_eta_cust] = eta.cust_est
 
-        dev_total = 0
         for dev, hours in eta.dev_hours.items():
             t = sum(hours.values())
             r.dev(dev, t)
-            dev_total += t
 
         # fill out phases when closed
         if in_progress is False:
@@ -399,7 +420,20 @@ class eta_table:
             r[r.h_phase_dev] = p1
             r[r.h_phase_review] = p2
             r[r.h_phase_total] = p0 + p1 + p2
-            r[r.h_dev_total] = dev_total
+            r[r.h_dev_total] = self.dev_hours_total()
+            # closed but more than a week but with proper monday
+            if total_days > 7:
+                ch_monday = prev_monday(True)
+                if ch_monday < pr.closed_at.date():
+                    try:
+                        eta_rel = self.relative_eta(ch_monday)
+                        if eta_rel is not None:
+                            r[r.h_last_week] = eta_rel.dev_hours_total()
+                    except Exception as e:
+                        _logger.info(
+                            f"Cannot get relative eta [{self.pr_id}] [{self.pr.html_url}]")
+        else:
+            r[r.h_last_week] = self.dev_hours_total()
 
         rec = re.compile(r"jira\D?(\d+)", re.IGNORECASE)
         m = rec.search(r[r.h_issue])
@@ -413,10 +447,15 @@ class eta_table:
         if self.pr.created_at.date() >= from_monday:
             return None
 
+        if is_issue(self.pr):
+            _logger.critical(
+                f"Cannot do relative ETA for ISSUE (only PR)! [{self.pr_id}] -> [{self.pr.html_url}]")
+            return None
+
         checkpoint_eta_d = parse_checkpoint_eta(self.pr, from_monday)
         if checkpoint_eta_d is None:
             _logger.info(
-                f"Should have had ETA checkpoint {self.pr_id} -> [{self.pr.html_url}]")
+                f"Expected ETA checkpoint {self.pr_id} -> [{self.pr.html_url}]\nPossible cause: no updates that week")
             return None
 
         rel_eta = self.copy()
