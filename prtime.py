@@ -796,21 +796,23 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
 
         updated, _1 = was_updated(
             pr, since=monday, update_events=("committed", "commented"))
-        if updated:
-            # add new checkpoint
-            body = f"""<details><summary>ETA checkpoint [{monday}]-[{today}]</summary>
-{json.dumps(eta.d, indent=2)}
-</details>"""
-            _logger.info(f"Checkpoint for [{pr_id}] [{pr.html_url}]")
-            if dry:
-                continue
-            pr.as_issue().create_comment(body)
-        else:
+
+        # add new checkpoint
+        body = f"""<details><summary>ETA checkpoint [{monday}]-[{today}]</summary>
+        {json.dumps(eta.d, indent=2)}
+        </details>"""
+        _logger.info(f"Checkpoint for [{pr_id}] [{pr.html_url}]")
+        if dry:
+            continue
+        pr.as_issue().create_comment(body)
+
+        if not updated:
             stale.append((pr_id, pr.html_url))
 
     _logger.info("=====")
     for pr_id, html_url in stale:
-        _logger.info(f"Issue not updated lately!: [{pr_id}] [{html_url}]")
+        _logger.info(
+            f"Issue not updated lately (checkpoint made): [{pr_id}] [{html_url}]")
 
 
 def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None, output_md: str = None):
