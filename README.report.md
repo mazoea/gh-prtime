@@ -2,6 +2,8 @@
 
 1. Fix ETAs, chide someone
 ```
+set TRACKER_LINK=https://***.atlassian.net/browse/
+set CUSTOMER=xxxcustomer
 set GITHUB_PAT=XXX
 python prtime.py --validate --state=closed --check-last=12w
 ```

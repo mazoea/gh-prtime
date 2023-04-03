@@ -63,9 +63,13 @@ def load_settings(file_str: str):
         if isinstance(v, str) and v.startswith("./"):
             settings[k] = os.path.join(_this_dir, v[2:])
 
+    cfg["TRACKER_LINK"] = os.environ.get('TRACKER_LINK', 'XXXlink')
+    cfg["CUSTOMER"] = os.environ.get('CUSTOMER', 'XXXcustomer')
+
     return cfg
 
 
+# init in `load_settings`
 settings = {}
 
 
@@ -82,6 +86,7 @@ def prev_monday(force_prev=True) -> date:
         weeks = 0
     monday = today + timedelta(days=-today.weekday(), weeks=weeks)
     return monday.date()
+
 
 # =================
 
@@ -113,7 +118,7 @@ def sum_hours(s, pr_id, pr_html=None):
     """
     try:
         return float(eval(s))
-    except:
+    except Exception:
         _logger.info(f"Cannot parse [{s}] in [{pr_id}] [{pr_html or ''}]")
     return -1.
 
@@ -160,8 +165,11 @@ class hours_row(object):
         for k in self.h_spec:
             self._d[k] = ""
 
-    def __getitem__(self, k): return self._d[k]
-    def __setitem__(self, k, v): self._d[k] = v
+    def __getitem__(self, k):
+        return self._d[k]
+
+    def __setitem__(self, k, v):
+        self._d[k] = v
 
     def dev(self, key, value):
         exp_k = f"Dev {key}"
@@ -208,7 +216,6 @@ class eta_row:
 
 
 class eta_table:
-
     label_prefix = "ETA_err_"
 
     def __init__(self, pr, pr_id, cols):
@@ -255,6 +262,16 @@ class eta_table:
     def dev_hours(self):
         return self._d["dev_hours"]
 
+    @dev_hours.setter
+    def dev_hours(self, d):
+        """
+            Overwrite dev hours, used when relative ETA is needed.
+        """
+        self._d["dev_hours"] = d
+        # clear stage totals
+        for k in self.stage_totals.keys():
+            self.stage_totals[k] = 0.
+
     @property
     def stage_totals(self):
         return self._d["stage_totals"]
@@ -269,15 +286,15 @@ class eta_table:
         d = {}
         try:
             d["customer_estimate"] = float(self.rows[-1].total)
-        except:
+        except Exception:
             return None
         try:
             d["estimate"] = float(self.rows[-2].total)
-        except:
+        except Exception:
             return None
         try:
             d["total_reported"] = float(self.rows[-3].total)
-        except:
+        except Exception:
             return None
 
         dev_hours = {k: {} for k in self.rows[0].dev_names}
@@ -316,7 +333,7 @@ class eta_table:
         ver_3 = True
         try:
             float(self.rows[2].total)
-        except:
+        except Exception:
             ver_3 = False
         if not ver_1 or not ver_2 or not ver_3:
             _logger.critical(
@@ -342,13 +359,14 @@ class eta_table:
         valid = True
         html_url = pr.html_url if pr is not None else ""
 
-        def _add_error(s: str): errors.append("%s%s" % (eta_table.label_prefix, s))
+        def _add_error(s: str):
+            errors.append("%s%s" % (eta_table.label_prefix, s))
 
         def _err_msg(s: str):
             return f"{s} in [{self.pr_id}]\n\t->[{html_url}]"
 
         if self.total_reported == 0:
-            msg = f"Total reported is 0!"
+            msg = "Total reported is 0!"
             _logger.critical(_err_msg(msg))
             _add_error("total_is_0")
             valid = False
@@ -392,7 +410,7 @@ class eta_table:
         r[r.h_customer] = "internal"
         r[r.h_issue] = f"{'/'.join(pr.html_url.split('/')[-3:])}:{pr.title}"
         r[r.h_link_gh] = pr.html_url
-        r[r.h_state] = pr.state
+        r[r.h_state] = pr.state if not in_progress else "open"
         r[r.h_closed] = pr.closed_at
         r[r.h_created] = pr.created_at
         total_days = -1
@@ -421,50 +439,80 @@ class eta_table:
             r[r.h_phase_review] = p2
             r[r.h_phase_total] = p0 + p1 + p2
             r[r.h_dev_total] = self.dev_hours_total()
-            # closed but more than a week but with proper monday
-            if total_days > 7:
-                ch_monday = prev_monday(True)
-                if ch_monday < pr.closed_at.date():
-                    try:
-                        eta_rel = self.relative_eta(ch_monday)
-                        if eta_rel is not None:
-                            r[r.h_last_week] = eta_rel.dev_hours_total()
-                    except Exception as e:
-                        _logger.info(
-                            f"Cannot get relative eta [{self.pr_id}] [{self.pr.html_url}]")
         else:
             r[r.h_last_week] = self.dev_hours_total()
 
         rec = re.compile(r"jira\D?(\d+)", re.IGNORECASE)
         m = rec.search(r[r.h_issue])
         if m:
-            r[r.h_link_jira] = f"https://adventhp.atlassian.net/browse/OCR-{m.group(1)}"
-            r[r.h_customer] = "advent"
+            r[r.h_link_jira] = f"{settings['TRACKER_LINK']}{m.group(1)}"
+            r[r.h_customer] = settings['CUSTOMER']
 
         return r
 
     def relative_eta(self, from_monday):
-        if self.pr.created_at.date() >= from_monday:
-            return None
+        """
+            Get values for a week starting at `from_monday`.
+        """
+        till_sunday = from_monday + timedelta(days=6)
+
+        if self.pr.created_at.date() >= till_sunday:
+            _logger.critical(
+                f"INVALID relative_eta for [{self.pr_id}] [{self.pr.html_url}]!!!")
+            raise Exception("INVALID relative_eta")
 
         if is_issue(self.pr):
             _logger.critical(
                 f"Cannot do relative ETA for ISSUE (only PR)! [{self.pr_id}] -> [{self.pr.html_url}]")
             return None
 
-        checkpoint_eta_d = parse_checkpoint_eta(self.pr, from_monday)
-        if checkpoint_eta_d is None:
+        created_that_week = from_monday <= self.pr.created_at.date()
+        for_not_finished_week = datetime.now().date() <= till_sunday
+        closed_that_week = False
+        if self.pr.closed_at is not None and self.pr.closed_at.date() <= till_sunday:
+            closed_that_week = True
+
+        # 1. PR created that week
+        if created_that_week:
+
+            # created this week or already closed
+            if for_not_finished_week or closed_that_week:
+                return self
+
+            # next ETA is the one we want
+            chckp_eta_d_end = parse_checkpoint_eta(self.pr, till_sunday)
+            if chckp_eta_d_end is None:
+                _logger.info(
+                    f"Missing ETA checkpoint ~[{from_monday}]: {self.pr_id} -> [{self.pr.html_url}]!!")
+                return None
+
+            rel_eta = self.copy()
+            rel_eta.dev_hours = chckp_eta_d_end["dev_hours"]
+            return rel_eta
+
+        # 2. PR created before that week, start eta should be valid
+        chckp_eta_d_start = parse_checkpoint_eta(self.pr, from_monday)
+        if chckp_eta_d_start is None:
             _logger.info(
-                f"Expected ETA checkpoint {self.pr_id} -> [{self.pr.html_url}]\nPossible cause: no updates that week")
+                f"Missing ETA checkpoint ~[{from_monday}]: {self.pr_id} -> [{self.pr.html_url}]!!")
             return None
+
+        if for_not_finished_week or closed_that_week:
+            chckp_eta_d_end = self._d
+        else:
+            chckp_eta_d_end = parse_checkpoint_eta(self.pr, till_sunday)
+            if chckp_eta_d_end is None:
+                _logger.info(
+                    f"Missing ETA checkpoint ~[{till_sunday}]: {self.pr_id} -> [{self.pr.html_url}]!!")
+                return None
 
         rel_eta = self.copy()
         dev_hours_k = "dev_hours"
-        checkpoint_dev_hours = checkpoint_eta_d[dev_hours_k]
+        dev_hours_start = chckp_eta_d_start[dev_hours_k]
+        dev_hours_end = chckp_eta_d_end[dev_hours_k]
         for dev, hours_d in rel_eta.dev_hours.items():
-            for stage, hours in hours_d.items():
-                if hours > 0. and checkpoint_dev_hours[dev][stage] > 0.:
-                    hours_d[stage] -= checkpoint_dev_hours[dev][stage]
+            for stage in hours_d.keys():
+                hours_d[stage] = dev_hours_end[dev][stage] - dev_hours_start[dev][stage]
         return rel_eta
 
 
@@ -578,6 +626,93 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, inc
             if rec_pr_time.search(pr.body or "") is None:
                 continue
             yield repo.name, pr
+
+
+def pr_with_eta_hours(gh, start_at: datetime):
+    """
+        Find all Issues/PRs with ETA tables valid for the report.
+    """
+    sort_by = "updated"
+    rec_pr_time = re.compile(r"[|]\s*ETA")
+
+    weeks = defaultdict(list)
+
+    def _filter(iss_or_pr, ign_arr: list):
+        if iss_or_pr.number in ign_arr:
+            return True
+        if iss_or_pr.updated_at < start_at:
+            raise StopIteration()
+        if rec_pr_time.search(iss_or_pr.body or "") is None:
+            return True
+        return False
+
+    def process_one(repo_name, iss_or_pr):
+        created = iss_or_pr.created_at
+        closed = iss_or_pr.closed_at
+        week_d_start, year_start = created.isocalendar()[1], created.isocalendar()[0]
+        end_d = closed.isocalendar() if closed else datetime.now().isocalendar()
+        week_d_end, year_end = end_d[1], end_d[0]
+        is_closed = closed is not None
+
+        week_year = []
+        use_year = year_start
+        week_d_i = week_d_start
+        while week_d_i != week_d_end + 1:
+            if week_d_i == 0:
+                use_year = year_end
+            week_year.append((week_d_i, use_year))
+            week_d_i = (week_d_i + 1) % 53
+        #
+        if len(week_year) > 10:
+            _logger.warning(
+                f"IGNORING, has been OPENED for too long [{len(week_year)} weeks]: {repo_name} {iss_or_pr.number} [{iss_or_pr.html_url}]")
+            return
+
+        for week_d, year in week_year:
+            week_state = 'open'
+            if week_d == week_d_start:
+                week_state = 'created'
+            if week_d == week_d_end and is_closed:
+                week_state = 'closed'
+            weeks[f"{year}_{week_d:02}"].append((repo_name, iss_or_pr, week_state))
+
+    def process(arr, ignored_pr, ftor):
+        try:
+            for iss_or_pr in tqdm.tqdm(arr, total=arr.totalCount):
+                ign = [] if is_issue(iss_or_pr) else ignored_pr
+                if _filter(iss_or_pr, ign):
+                    continue
+                ftor(repo.name, iss_or_pr)
+        except StopIteration:
+            pass
+
+    for p, ignored_pr in settings["projects"]:
+        repo = gh.get_repo(p)
+        _logger.info(repo.name)
+
+        try:
+            issues = repo.get_issues(state='all', sort=sort_by,
+                                     direction="desc", labels=["ETA"])
+            _logger.info("Total ISSUES count: [%d]", issues.totalCount)
+            process(issues, ignored_pr, process_one)
+        except StopIteration:
+            pass
+
+        try:
+            pulls = repo.get_pulls(state='all', sort=sort_by,
+                                   direction="desc", base=settings["base"])
+            _logger.info("Total PR count: [%d]", pulls.totalCount)
+            process(pulls, ignored_pr, process_one)
+        except StopIteration:
+            pass
+    week_keys = sorted(weeks.keys(), reverse=True)
+    for key in week_keys:
+        _logger.info(f"Week {key}: {len(weeks[key]):03d} items")
+        for repo_name, iss_or_pr, week_state in weeks[key]:
+            _logger.info(
+                f"\t{week_state: >8}{repo_name: >20}: [{iss_or_pr.html_url: >55}] [{iss_or_pr.title}]")
+
+    return weeks
 
 
 def find_cust_est(gh, issue_arr, state=None):
@@ -749,7 +884,7 @@ def validate(gh, start_date: datetime, state: str = "closed", sort_by=None):
 
 
 def was_updated(pr_or_issue, since=None, update_events=None):
-    update_events = update_events or ("committed", )
+    update_events = update_events or ("committed",)
     # when was the last commit
     issue = pr_or_issue
     try:
@@ -815,84 +950,53 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
             f"Issue not updated lately (checkpoint made): [{pr_id}] [{html_url}]")
 
 
-def find_hours_all(gh, start_date: datetime, state: str = "closed", sort_by=None, output_md: str = None):
+def find_hours_all(gh, start_date: datetime, output_md: str = None):
     """
         Show hours of all specified issues.
     """
-    ok_status = []
-    in_progress = []
+    def _monday_date(year, week):
+        first = date(year, 1, 1)
+        base = 1 if first.isocalendar()[1] == 1 else 8
+        return first + timedelta(days=base - first.isocalendar()[2] + 7 * (week - 1))
 
-    for repo_name, pr in pr_with_eta(gh, start_date, state="all", include_issues=True):
-        pr_id = get_pr_id(repo_name, pr)
-        if pr.state != state:
-            if pr.state == "open":
-                eta = parse_eta(pr, pr_id)
-                if eta is None:
-                    _logger.critical(f"Cannot parse ETA for {pr_id} {pr.html_url}")
-                    continue
-                in_progress.append(eta)
-            continue
+    weeks = pr_with_eta_hours(gh, start_date)
 
-        eta = parse_eta(pr, pr_id)
-        if eta is None:
-            continue
-        ok_status.append(eta)
-
-    if 0 == len(ok_status):
-        return
-
-    # sort by week
-    in_progress_d = defaultdict(list)
-    for eta in in_progress:
-        # when was the last commit
-        updated, week = was_updated(eta.pr)
-        if updated:
-            in_progress_d[week].append(eta)
-        else:
-            _logger.info(f"PR/ISSUE {eta.pr.html_url} not updated in the last week")
-
-    # sort
-    sort_by = sort_by or 'closed_at'
-    ok_status.sort(key=lambda x: getattr(x.pr, sort_by), reverse=True)
-    last_week_n = -1
-    done_weeks = 0
     with open(output_md, "w+", encoding="utf-8") as fout:
         fout.write(f"# Hours of all issues (generated at {_ts})\n\n")
 
-        for eta in ok_status:
-            pr = eta.pr
-            cal = getattr(pr, sort_by).isocalendar()
-            this_week_n = cal[1]
-            if last_week_n != this_week_n:
-                # print out in progress
-                for eta_prg in in_progress_d[last_week_n]:
-                    # do relative ETA only for the last one
-                    # NOTE: use monday from previous run
-                    eta_prg_rel = None if done_weeks > 1 else eta_prg.relative_eta(
-                        monday.date())
-                    if eta_prg_rel is None:
-                        eta_prg_rel = eta_prg
-                    else:
-                        _logger.info(
-                            f"Using relative ETA for in progress: {eta_prg.pr_id} {eta_prg.pr.html_url}")
-                    r = eta_prg_rel.md_hours(last_week_n, in_progress=True)
-                    fout.write(f"{str(r)}\n")
+        # sort helper
+        sort_states = {'closed': 0, 'created': 1, 'open': 2, }
 
-                d = f"{cal[0]}-W{this_week_n:02d}"
-                monday = datetime.strptime(d + '-1', "%Y-W%W-%w")
-                sunday = monday + timedelta(days=6)
+        # iterate through weeks
+        week_keys = sorted(weeks.keys(), reverse=True)
+        for week in week_keys:
+            year, week_n = week.split("_")
+            year = int(year)
+            week_n = int(week_n)
+            monday = _monday_date(year, week_n)
+            sunday = monday + timedelta(days=6)
+            fout.write(f"\n\n## {week}: [{monday} - {sunday}]\n\n")
+            fout.write(f"{hours_row.header}\n")
+            fout.write(f"{hours_row.header_sep}\n")
 
-                done_weeks += 1
-                # print new header
-                fout.write(
-                    f"\n\n## {cal[0]}: week #{this_week_n:02d} - {monday.date()} - {sunday.date()}\n\n")
-                last_week_n = this_week_n
-                fout.write(f"{hours_row.header}\n")
-                fout.write(f"{hours_row.header_sep}\n")
+            # sort based on open/closed states
+            iss_pr_arr = sorted(weeks[week], key=lambda x: sort_states.get(x[2], 10))
+            for repo_name, iss_pr, week_state in tqdm.tqdm(iss_pr_arr):
+                iss_pr_id = get_pr_id(repo_name, iss_pr)
+                eta = parse_eta(iss_pr, iss_pr_id)
+                if eta is None:
+                    continue
+                # when was the last commit
+                updated, week = was_updated(eta.pr)
+                if not updated:
+                    _logger.info(
+                        f"PR/ISSUE {eta.pr.html_url} not updated in the last week")
 
-            # print closed issue
-            r = eta.md_hours(last_week_n)
-            fout.write(f"{str(r)}\n")
+                eta_rel = eta.relative_eta(monday)
+                if eta_rel is None:
+                    continue
+                r = eta_rel.md_hours(week_n, in_progress=(week_state != "closed"))
+                fout.write(f"{str(r)}\n")
 
 
 def store(gh, out_file):
@@ -963,8 +1067,6 @@ if __name__ == '__main__':
         '--dry-run', help='Do not make any changes (valid for --checkpoint)', required=False, action="store_true")
     parser.add_argument(
         '--output-file', help='Output file (valid for --hours)', required=False, default=None, type=str)
-    parser.add_argument(
-        '--week-progress', help='For debugging - test weekly progress', required=False, action="store_true")
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -1021,8 +1123,7 @@ if __name__ == '__main__':
         else:
             output_f = get_output_file(settings["result_dir"], _ts, "hours.md")
         start_date = settings["start_time"]
-        find_hours_all(gh, start_date, state=flags.state,
-                       sort_by=flags.sort, output_md=output_f)
+        find_hours_all(gh, start_date, output_md=output_f)
         if os.path.exists(output_f):
             if not os.path.exists(settings["result_dir"]):
                 os.makedirs(settings["result_dir"])
@@ -1059,27 +1160,3 @@ if __name__ == '__main__':
                 str(pr),
                 pr.html_url
             )
-
-    if flags.week_progress:
-        monday = prev_monday(False)
-        for repo_name, pr in pr_with_eta(gh, settings["start_time"], state="open", include_issues=True):
-            updated, _1 = was_updated(
-                pr, since=monday, update_events=("committed", "commented"))
-            if not updated:
-                continue
-            pr_id = get_pr_id(repo_name, pr)
-            eta = parse_eta(pr, pr_id)
-            if eta is None:
-                log_err("Cannot parse", pr, pr_id)
-                continue
-
-            orig_row = eta.md_hours(-1, in_progress=True)
-            eta_rel = eta.relative_eta(monday)
-            r = None
-            if eta_rel is not None:
-                r = eta_rel.md_hours(-1, in_progress=True)
-            msg = f"{pr_id} -> [{pr.html_url}]\n{hours_row.header}\n"
-            msg += f"{str(orig_row)}\n"
-            if r is not None:
-                msg += f"{str(r)}\n"
-            _logger.info(msg)

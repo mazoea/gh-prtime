@@ -1,0 +1,21 @@
+[tool.autopep8]
+max_line_length = 90
+
+[tool.ruff]
+select = ["E", "F"]
+ignore = ["F403", "F405", "E501", "E402", "F841", "E741"]
+
+fixable = ["A", "B", "C", "D", "E", "F",]
+unfixable = []
+
+exclude = [
+    "__pypackages__",
+    ".venv",
+]
+
+line-length = 90
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+target-version = "py38"
+
+[tool.ruff.mccabe]
+max-complexity = 10
