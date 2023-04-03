@@ -12,6 +12,7 @@ ETA parser for github issues/PRs.
 """
 import os
 import sys
+import copy
 import logging
 import argparse
 import re
@@ -231,6 +232,13 @@ class eta_table:
         self._d = self._parse()
         self._valid = self._d is not None
 
+        # validate
+        if self._valid:
+            stage_totals = copy.deepcopy(self.stage_totals)
+            stage_totals_1 = self.compute_stage_totals()
+            if stage_totals_1 != stage_totals:
+                _logger.warning("Computed stage totals do not match!")
+
     def copy(self):
         cp = eta_table(self.pr, self.pr_id, [])
         cp.rows = self.rows
@@ -268,9 +276,6 @@ class eta_table:
             Overwrite dev hours, used when relative ETA is needed.
         """
         self._d["dev_hours"] = d
-        # clear stage totals
-        for k in self.stage_totals.keys():
-            self.stage_totals[k] = 0.
 
     @property
     def stage_totals(self):
@@ -326,6 +331,15 @@ class eta_table:
         d["dev_hours"] = dev_hours
         d["stage_totals"] = stage_totals
         return d
+
+    def compute_stage_totals(self):
+        stage_totals = defaultdict(float)
+        for stage in ETA.stages:
+            for k, v in self.dev_hours.items():
+                stage_totals[stage] += v[stage]
+        self._d["stage_totals"] = stage_totals
+        self._d["total_reported"] = sum(stage_totals.values())
+        return stage_totals
 
     def _validate_keys(self):
         ver_1 = self.rows[0].name.lower() == ETA.key_phase
@@ -488,6 +502,7 @@ class eta_table:
 
             rel_eta = self.copy()
             rel_eta.dev_hours = chckp_eta_d_end["dev_hours"]
+            rel_eta.compute_stage_totals()
             return rel_eta
 
         # 2. PR created before that week, start eta should be valid
@@ -513,6 +528,7 @@ class eta_table:
         for dev, hours_d in rel_eta.dev_hours.items():
             for stage in hours_d.keys():
                 hours_d[stage] = dev_hours_end[dev][stage] - dev_hours_start[dev][stage]
+        rel_eta.compute_stage_totals()
         return rel_eta
 
 
