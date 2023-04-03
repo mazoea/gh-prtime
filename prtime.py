@@ -456,7 +456,7 @@ class eta_table:
         """
         till_sunday = from_monday + timedelta(days=6)
 
-        if self.pr.created_at.date() >= till_sunday:
+        if self.pr.created_at.date() > till_sunday:
             _logger.critical(
                 f"INVALID relative_eta for [{self.pr_id}] [{self.pr.html_url}]!!!")
             raise Exception("INVALID relative_eta")
@@ -663,9 +663,10 @@ def pr_with_eta_hours(gh, start_at: datetime):
             week_year.append((week_d_i, use_year))
             week_d_i = (week_d_i + 1) % 53
         #
-        if len(week_year) > 10:
-            _logger.warning(
-                f"IGNORING, has been OPENED for too long [{len(week_year)} weeks]: {repo_name} {iss_or_pr.number} [{iss_or_pr.html_url}]")
+        if len(week_year) > settings["warn_if_opened_longer_than"]:
+            if iss_or_pr.state != "closed":
+                _logger.warning(
+                    f"IGNORING, has been OPENED for too long [{len(week_year)} weeks]: {repo_name} {iss_or_pr.number} [{iss_or_pr.html_url}]")
             return
 
         for week_d, year in week_year:

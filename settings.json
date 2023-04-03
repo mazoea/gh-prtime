@@ -23,5 +23,6 @@
     "start_time": "2022-02-01",
     "state_dir": "./__state",
     "result_dir": "./___results",
-    "base": "dp_advent"
+    "base": "dp_advent",
+    "warn_if_opened_longer_than": 10
 }
