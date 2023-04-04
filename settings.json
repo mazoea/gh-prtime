@@ -2,22 +2,29 @@
     "projects": [
         [
             "mazoea/c-image-to-text",
-            [
-                410,
-                405,
-                400,
-                395,
-                386,
-                423
-            ]
+            {
+                "pr_base": "dp_advent",
+                "ignored_pr": [
+                    410,
+                    405,
+                    400,
+                    395,
+                    386,
+                    423
+                ]
+            }
         ],
         [
             "mazoea/te-server",
-            []
+            {
+                "pr_base": "dp_advent"
+            }
         ],
         [
             "mazoea/c-pdf-to-text",
-            []
+            {
+                "pr_base": "master"
+            }
         ]
     ],
     "start_time": "2022-02-01",

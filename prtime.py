@@ -680,10 +680,14 @@ def pr_with_eta_hours(gh, start_at: datetime):
             week_d_i = (week_d_i + 1) % 53
         #
         if len(week_year) > settings["warn_if_opened_longer_than"]:
-            if iss_or_pr.state != "closed":
-                _logger.warning(
-                    f"IGNORING, has been OPENED for too long [{len(week_year)} weeks]: {repo_name} {iss_or_pr.number} [{iss_or_pr.html_url}]")
-            return
+            lately = datetime.now() - timedelta(days=14)
+            updated, week = was_updated(iss_or_pr, since=lately.date())
+            # only ignore if not updated lately
+            if not updated:
+                if iss_or_pr.state != "closed":
+                    _logger.warning(
+                        f"IGNORING: OPENED for too long [{len(week_year)} weeks][{iss_or_pr.created_at}]: {repo_name}:{iss_or_pr.number} [{iss_or_pr.html_url}] [{iss_or_pr.title}]")
+                return
 
         for week_d, year in week_year:
             week_state = 'open'
@@ -693,7 +697,9 @@ def pr_with_eta_hours(gh, start_at: datetime):
                 week_state = 'closed'
             weeks[f"{year}_{week_d:02}"].append((repo_name, iss_or_pr, week_state))
 
-    def process(arr, ignored_pr, ftor):
+    def process(arr, ignored_pr: list, ftor):
+        if arr.totalCount == 0:
+            return
         try:
             for iss_or_pr in tqdm.tqdm(arr, total=arr.totalCount):
                 ign = [] if is_issue(iss_or_pr) else ignored_pr
@@ -703,23 +709,23 @@ def pr_with_eta_hours(gh, start_at: datetime):
         except StopIteration:
             pass
 
-    for p, ignored_pr in settings["projects"]:
+    for p, p_dict in settings["projects"]:
         repo = gh.get_repo(p)
         _logger.info(repo.name)
 
         try:
             issues = repo.get_issues(state='all', sort=sort_by,
                                      direction="desc", labels=["ETA"])
-            _logger.info("Total ISSUES count: [%d]", issues.totalCount)
-            process(issues, ignored_pr, process_one)
+            _logger.info(f"[{p}] ISSUES: [{issues.totalCount:03d}]")
+            process(issues, p_dict.get("ignored_issues", []), process_one)
         except StopIteration:
             pass
 
         try:
             pulls = repo.get_pulls(state='all', sort=sort_by,
-                                   direction="desc", base=settings["base"])
-            _logger.info("Total PR count: [%d]", pulls.totalCount)
-            process(pulls, ignored_pr, process_one)
+                                   direction="desc", base=p_dict["pr_base"])
+            _logger.info(f"[{p}] PR: [{pulls.totalCount:03d}]")
+            process(pulls, p_dict.get("ignored_pr", []), process_one)
         except StopIteration:
             pass
     week_keys = sorted(weeks.keys(), reverse=True)
@@ -728,6 +734,7 @@ def pr_with_eta_hours(gh, start_at: datetime):
         for repo_name, iss_or_pr, week_state in weeks[key]:
             _logger.info(
                 f"\t{week_state: >8}{repo_name: >20}: [{iss_or_pr.html_url: >55}] [{iss_or_pr.title}]")
+    _logger.info(40 * "=")
 
     return weeks
 
