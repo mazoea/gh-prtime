@@ -143,27 +143,39 @@ class hours_row(object):
     h_phase_review = "Phase Review"
     h_phase_total = "Phase Total"
     h_dev_total = "Dev Total"
-    h_dev_jh = "Dev JH"
-    h_dev_jp = "Dev JP"
-    h_dev_tm = "Dev TM"
     h_dev_others = "Dev Others"
     h_closed = "Closed"
     h_created = "Created"
     h_days_open = "Days Opened"
     h_last_week = "Last Week Total"
+    h_exp_dev_k = "Dev %s"
+    # TODO(jm): filled based on settings in `init`
+    # order headers
+    h_spec = None
+    # header string with separators
+    header = None
+    header_sep = None
 
-    h_spec = (
-        h_week, h_customer, h_issue, h_link_gh, h_link_jira, h_state, h_tracked, h_eta, h_eta_cust,
-        h_phase_eta, h_phase_dev, h_phase_review, h_phase_total, h_dev_total,
-        h_dev_jh, h_dev_jp, h_dev_tm, h_dev_others, h_closed, h_created, h_days_open, h_last_week
-    )
-    header = "|" + ("|".join([f" {x:10s} " for x in h_spec]))[1:] + " |"
-    header_len = header.count("|") - 1
-    header_sep = header_len * ("| %10s " % "----:") + " |"
+    @staticmethod
+    def init():
+        h_devs_arr = [hours_row.h_exp_dev_k % x for x in settings["devs"]]
+        hours_row.h_spec = [
+            hours_row.h_week, hours_row.h_customer, hours_row.h_issue,
+            hours_row.h_link_gh, hours_row.h_link_jira,
+            hours_row.h_state, hours_row.h_tracked,
+            hours_row.h_eta, hours_row.h_eta_cust, hours_row.h_phase_eta, hours_row.h_phase_dev, hours_row.h_phase_review, hours_row.h_phase_total, hours_row.h_dev_total
+        ] + h_devs_arr + [
+            hours_row.h_dev_others,
+            hours_row.h_closed, hours_row.h_created, hours_row.h_days_open, hours_row.h_last_week
+        ]
+        hours_row.header = "|" + \
+            ("|".join([f" {x:10s} " for x in hours_row.h_spec]))[1:] + " |"
+        header_len = hours_row.header.count("|") - 1
+        hours_row.header_sep = header_len * ("| %10s " % "----:") + " |"
 
     def __init__(self):
         self._d = OrderedDict()
-        for k in self.h_spec:
+        for k in hours_row.h_spec:
             self._d[k] = ""
 
     def __getitem__(self, k):
@@ -173,9 +185,9 @@ class hours_row(object):
         self._d[k] = v
 
     def dev(self, key, value):
-        exp_k = f"Dev {key}"
+        dev_k = hours_row.h_exp_dev_k % key
         for k in self._d.keys():
-            if k == exp_k:
+            if k == dev_k:
                 self._d[k] = value
                 return
         if self._d[self.h_dev_others] == "":
@@ -237,7 +249,7 @@ class eta_table:
             stage_totals = copy.deepcopy(self.stage_totals)
             stage_totals_1 = self.compute_stage_totals()
             if stage_totals_1 != stage_totals:
-                _logger.warning("Computed stage totals do not match!")
+                _logger.warning(f"Computed stage totals do not match in [{self.pr_id}]!")
 
     def copy(self):
         cp = eta_table(self.pr, self.pr_id, [])
@@ -659,6 +671,9 @@ def pr_with_eta_hours(gh, start_at: datetime):
         if iss_or_pr.updated_at < start_at:
             raise StopIteration()
         if rec_pr_time.search(iss_or_pr.body or "") is None:
+            return True
+        # ignore issues that are too old
+        if iss_or_pr.created_at < start_at:
             return True
         return False
 
@@ -1104,6 +1119,9 @@ if __name__ == '__main__':
     settings_file = os.path.join(_this_dir, flags.settings)
     _logger.info("Using [%s] settings file", settings_file)
     settings = load_settings(settings_file)
+
+    # init based on settings
+    hours_row.init()
 
     gh = Github(os.environ[gh_key])
 
