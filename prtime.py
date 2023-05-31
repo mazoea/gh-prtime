@@ -236,9 +236,13 @@ class eta_table:
         self.pr_id = pr_id
         self.rows = []
         self._valid = False
-        if len(cols) > 0:
-            self.rows = [eta_row(x, pr_id, pr.html_url) for x in cols]
-            self._valid = self._validate_keys()
+        try:
+            if len(cols) > 0:
+                self.rows = [eta_row(x, pr_id, pr.html_url) for x in cols]
+                self._valid = self._validate_keys()
+        except Exception as e:
+            _logger.exception(
+                f"Could not validate ETA table for [{pr.html_url}] [{self.rows}]")
         if not self._valid:
             return
         self._d = self._parse()
