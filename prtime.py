@@ -491,16 +491,19 @@ class eta_table:
                 f"INVALID relative_eta for [{self.pr_id}] [{self.pr.html_url}]!!!")
             raise Exception("INVALID relative_eta")
 
-        if is_issue(self.pr):
-            _logger.critical(
-                f"Cannot do relative ETA for ISSUE (only PR)! [{self.pr_id}] -> [{self.pr.html_url}]")
-            return None
-
         created_that_week = from_monday <= self.pr.created_at.date()
         for_not_finished_week = datetime.now().date() <= till_sunday
         closed_that_week = False
         if self.pr.closed_at is not None and self.pr.closed_at.date() <= till_sunday:
             closed_that_week = True
+
+        if is_issue(self.pr):
+            # works for issues in the current week
+            if created_that_week and for_not_finished_week:
+                return self
+            _logger.critical(
+                f"Cannot do relative ETA for ISSUE (only PR)! [{self.pr_id}] -> [{self.pr.html_url}]")
+            return None
 
         # 1. PR created that week
         if created_that_week:
@@ -936,7 +939,8 @@ def was_updated(pr_or_issue, since=None, update_events=None):
         pass
     updated = [x for x in issue.get_timeline() if x.event in update_events]
     if len(updated) == 0:
-        return False, -1
+        week = issue.created_at.isocalendar()[1]
+        return False, week
 
     last_update = updated[-1]
     try:
@@ -1030,8 +1034,8 @@ def find_hours_all(gh, start_date: datetime, output_md: str = None):
                 if eta is None:
                     continue
                 # when was the last commit
-                updated, week = was_updated(eta.pr)
-                if not updated:
+                updated, week_n_upd_create = was_updated(eta.pr)
+                if not updated and week_n_upd_create != week_n:
                     _logger.info(
                         f"PR/ISSUE {eta.pr.html_url} not updated in the last week")
 
