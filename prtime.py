@@ -639,7 +639,7 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, inc
         repo = gh.get_repo(p)
         _logger.info(repo.name)
         if include_issues:
-            issues = repo.get_issues(state='all', sort='created',
+            issues = repo.get_issues(state=state or 'all', sort='created',
                                      direction="desc", labels=["ETA"])
             _logger.info("Total ISSUES count: [%d]", issues.totalCount)
             for issue in tqdm.tqdm(issues, total=issues.totalCount):
