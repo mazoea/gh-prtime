@@ -26,7 +26,7 @@ from pprint import pformat
 from collections import defaultdict, OrderedDict
 from github import Github
 
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 _ts = datetime.now().strftime("%Y_%m_%d__%H.%M.%S")
 _logger = logging.getLogger()
@@ -58,7 +58,7 @@ def load_settings(file_str: str):
 
     with open(file_str, "r") as fin:
         cfg = json.load(fin)
-    cfg["start_time"] = datetime.strptime(cfg["start_time"], r"%Y-%m-%d")
+    cfg["start_time"] = datetime.strptime(cfg["start_time"], r"%Y-%m-%d").replace(tzinfo=timezone.utc)
     # abs paths
     for k, v in settings.items():
         if isinstance(v, str) and v.startswith("./"):
@@ -1138,7 +1138,7 @@ if __name__ == '__main__':
         m = rec.match(flags.check_last)
         if m:
             since = datetime.now() - timedelta(weeks=int(m.group(1)))
-            settings["start_time"] = since
+            settings["start_time"] = since.replace(tzinfo=timezone.utc)
         else:
             _logger.critical("Unknown format f{flags.check_last}")
             sys.exit(1)

@@ -1,2 +1,2 @@
-PyGithub
+PyGithub>=2.0
 tqdm
