@@ -58,7 +58,8 @@ def load_settings(file_str: str):
 
     with open(file_str, "r") as fin:
         cfg = json.load(fin)
-    cfg["start_time"] = datetime.strptime(cfg["start_time"], r"%Y-%m-%d").replace(tzinfo=timezone.utc)
+    cfg["start_time"] = datetime.strptime(
+        cfg["start_time"], r"%Y-%m-%d").replace(tzinfo=timezone.utc)
     # abs paths
     for k, v in settings.items():
         if isinstance(v, str) and v.startswith("./"):
@@ -545,8 +546,24 @@ class eta_table:
         dev_hours_start = chckp_eta_d_start[dev_hours_k]
         dev_hours_end = chckp_eta_d_end[dev_hours_k]
         for dev, hours_d in rel_eta.dev_hours.items():
+            # Check if the developer exists in both start and end checkpoint data
+            if dev not in dev_hours_start or dev not in dev_hours_end:
+                _logger.warning(
+                    f"Developer '{dev}' missing from checkpoint data for PR {self.pr_id}, skipping")
+                # Set all stages to 0 for missing developers
+                for stage in hours_d.keys():
+                    hours_d[stage] = 0
+                continue
+
             for stage in hours_d.keys():
-                hours_d[stage] = dev_hours_end[dev][stage] - dev_hours_start[dev][stage]
+                # Also check if the stage exists in both checkpoints
+                if stage not in dev_hours_start[dev] or stage not in dev_hours_end[dev]:
+                    _logger.warning(
+                        f"Stage '{stage}' missing for developer '{dev}' in checkpoint data for PR {self.pr_id}, setting to 0")
+                    hours_d[stage] = 0
+                else:
+                    hours_d[stage] = dev_hours_end[dev][stage] - \
+                        dev_hours_start[dev][stage]
         rel_eta.compute_stage_totals()
         return rel_eta
 
