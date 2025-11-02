@@ -2,3 +2,5 @@
 __state
 ___*
 *.bak
+__tmp/
+__pycache__
