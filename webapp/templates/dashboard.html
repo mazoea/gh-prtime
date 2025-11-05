@@ -193,8 +193,15 @@
             display: block;
         }
 
+        /* Table overflow wrapper */
+        .table-wrapper {
+            overflow-x: auto;
+            margin-bottom: 20px;
+        }
+
         table {
             width: 100%;
+            min-width: 1000px; /* Ensure tables don't squeeze too much */
             border-collapse: collapse;
             background: var(--bg-card);
             border-radius: 10px;
@@ -267,6 +274,7 @@
 
         .badge-open { background: var(--success); color: white; }
         .badge-closed { background: var(--text-secondary); color: white; }
+        .badge-created { background: var(--primary); color: white; }
         .badge-issue { background: #8b5cf6; color: white; }
         .badge-pr { background: #ec4899; color: white; }
         .badge-error { background: var(--error); color: white; }
@@ -407,6 +415,20 @@
             <button class="btn-primary" id="startBtn" onclick="startAnalysis()">
                 🚀 Start Analysis
             </button>
+            <button class="btn-primary" id="validateBtn" onclick="startValidation()" style="background: var(--warning);">
+                ✅ Validate
+            </button>
+            <button class="btn-primary" id="clearBtn" onclick="clearResults()" style="background: var(--text-secondary);">
+                🗑️ Clear Results
+            </button>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <label style="color: var(--text-secondary); font-size: 0.9em;">State:</label>
+                <select id="stateFilter">
+                    <option value="all" selected>All</option>
+                    <option value="open">Open</option>
+                    <option value="closed">Closed</option>
+                </select>
+            </div>
             <select id="settingsSelect">
                 <option value="settings.json">Default Settings</option>
                 <option value="___settings.dq.json">DQ Settings</option>
@@ -415,8 +437,8 @@
                 <label style="color: var(--text-secondary); font-size: 0.9em;">Filter by Week:</label>
                 <select id="weekFilter" onchange="filterByWeek()">
                     <option value="all">All Time</option>
-                    <option value="thisWeek" selected>This Week</option>
-                    <option value="lastWeek">Last Week</option>
+                    <option value="thisWeek">This Week</option>
+                    <option value="lastWeek" selected>Last Week</option>
                     <option value="custom">Custom Date...</option>
                 </select>
                 <input type="date" id="customDate" style="display: none;" onchange="applyCustomDateFilter()">
@@ -473,6 +495,23 @@
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill" style="width: 0%">0%</div>
             </div>
+            
+            <!-- Console Output NEW -->
+            <div id="consoleSection" style="margin-top: 15px; display: none;">
+                <h3 style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 5px;">📋 Console Output</h3>
+                <div id="consoleOutput" style="
+                    background: #0a0e1a; 
+                    border: 1px solid var(--border); 
+                    border-radius: 6px; 
+                    padding: 10px; 
+                    max-height: 200px; 
+                    overflow-y: auto; 
+                    font-family: 'Courier New', monospace; 
+                    font-size: 0.85em;
+                    color: #88c0d0;
+                "></div>
+            </div>
+            
             <div id="errorSection" style="display: none;">
                 <h3 style="color: var(--error); margin-top: 20px;">⚠️ Errors</h3>
                 <div class="error-list" id="errorList"></div>
@@ -508,6 +547,7 @@
 
         <!-- Tab Contents -->
         <div id="tab-open" class="tab-content active">
+            <div class="table-wrapper">
             <table id="openTable">
                 <thead>
                     <tr>
@@ -527,9 +567,11 @@
                     <tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📭</div>No data yet</td></tr>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="tab-closed" class="tab-content">
+            <div class="table-wrapper">
             <table id="closedTable">
                 <thead>
                     <tr>
@@ -549,6 +591,7 @@
                     <tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📭</div>No data yet</td></tr>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="tab-hours" class="tab-content">
@@ -564,7 +607,7 @@
                     </select>
                 </div>
             </div>
-            <div style="overflow-x: auto;">
+            <div class="table-wrapper">
                 <table id="hoursTable" style="font-size: 0.9em;">
                     <thead>
                         <tr>
@@ -603,6 +646,7 @@
                     </p>
                 </div>
             </div>
+            <div class="table-wrapper">
             <table id="errorsTable">
                 <thead>
                     <tr>
@@ -619,9 +663,11 @@
                     <tr><td colspan="7" class="empty-state"><div class="empty-state-icon">✅</div>No validation errors</td></tr>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="tab-thisWeek" class="tab-content">
+            <div class="table-wrapper">
             <table id="weekTable">
                 <thead>
                     <tr>
@@ -630,17 +676,20 @@
                         <th>Title</th>
                         <th>Type</th>
                         <th>State</th>
+                        <th>Hours This Week</th>
                         <th>Updated</th>
                         <th>Link</th>
                     </tr>
                 </thead>
                 <tbody id="weekTableBody">
-                    <tr><td colspan="7" class="empty-state"><div class="empty-state-icon">📅</div>No updates this week</td></tr>
+                    <tr><td colspan="8" class="empty-state"><div class="empty-state-icon">📅</div>No updates this week</td></tr>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="tab-missing" class="tab-content">
+            <div class="table-wrapper">
             <table id="missingTable">
                 <thead>
                     <tr>
@@ -657,16 +706,19 @@
                     <tr><td colspan="7" class="empty-state"><div class="empty-state-icon">📋</div>No missing ETAs</td></tr>
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 
     <script>
         let pollInterval = null;
         let allData = {};
+        let lastKnownStatus = 'idle'; // Track status to prevent auto-refresh after completion
 
         async function startAnalysis() {
             const btn = document.getElementById('startBtn');
             const settings = document.getElementById('settingsSelect').value;
+            const state = document.getElementById('stateFilter').value;
             
             btn.disabled = true;
             btn.innerHTML = '<span class="loading"></span> Running...';
@@ -675,13 +727,18 @@
                 const response = await fetch('/api/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({settings_file: settings})
+                    body: JSON.stringify({
+                        settings_file: settings,
+                        state: state,
+                        max_items: 400
+                    })
                 });
                 
                 if (response.ok) {
                     startPolling();
                 } else {
-                    alert('Failed to start analysis');
+                    const error = await response.json();
+                    alert('Failed to start analysis: ' + (error.error || 'Unknown error'));
                     btn.disabled = false;
                     btn.innerHTML = '🚀 Start Analysis';
                 }
@@ -690,6 +747,86 @@
                 btn.disabled = false;
                 btn.innerHTML = '🚀 Start Analysis';
             }
+        }
+
+        async function startValidation() {
+            const btn = document.getElementById('validateBtn');
+            const startBtn = document.getElementById('startBtn');
+            const settings = document.getElementById('settingsSelect').value;
+            const state = document.getElementById('stateFilter').value;
+            
+            btn.disabled = true;
+            startBtn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Validating...';
+            
+            try {
+                const response = await fetch('/api/start-validation', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        settings_file: settings,
+                        state: state
+                    })
+                });
+                
+                if (response.ok) {
+                    startPolling();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to start validation: ' + (error.error || 'Unknown error'));
+                    btn.disabled = false;
+                    startBtn.disabled = false;
+                    btn.innerHTML = '✅ Validate';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                startBtn.disabled = false;
+                btn.innerHTML = '✅ Validate';
+            }
+        }
+
+        function clearResults() {
+            // Reset status to idle to allow auto-refresh
+            lastKnownStatus = 'idle';
+            
+            // Clear all data
+            allData = {};
+            
+            // Reset UI
+            document.getElementById('statTotal').textContent = '-';
+            document.getElementById('statOpen').textContent = '-';
+            document.getElementById('statClosed').textContent = '-';
+            document.getElementById('statErrors').textContent = '-';
+            document.getElementById('statWeek').textContent = '-';
+            document.getElementById('statMissing').textContent = '-';
+            
+            // Clear tables
+            document.getElementById('openTableBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📭</div>No data yet</td></tr>';
+            document.getElementById('closedTableBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📭</div>No data yet</td></tr>';
+            document.getElementById('hoursTableBody').innerHTML = '<tr><td colspan="17" class="empty-state"><div class="empty-state-icon">📊</div>No data yet</td></tr>';
+            document.getElementById('errorsTableBody').innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-icon">✅</div>No validation errors</td></tr>';
+            document.getElementById('weekTableBody').innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-icon">📅</div>No updates this week</td></tr>';
+            document.getElementById('missingTableBody').innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-icon">📋</div>No missing ETAs</td></tr>';
+            
+            // Reset console and errors
+            document.getElementById('consoleSection').style.display = 'none';
+            document.getElementById('consoleOutput').innerHTML = '';
+            document.getElementById('errorSection').style.display = 'none';
+            document.getElementById('errorList').innerHTML = '';
+            
+            // Reset progress
+            document.getElementById('statusBadge').textContent = 'Idle';
+            document.getElementById('statusBadge').className = 'status-badge status-idle';
+            document.getElementById('progressInfo').textContent = 'Click "Start Analysis" to begin';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressFill').textContent = '0%';
+            
+            // Clear sort states
+            sortStates = {};
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+            });
         }
 
         function startPolling() {
@@ -715,6 +852,8 @@
                     stopPolling();
                     document.getElementById('startBtn').disabled = false;
                     document.getElementById('startBtn').innerHTML = '🚀 Start Analysis';
+                    document.getElementById('validateBtn').disabled = false;
+                    document.getElementById('validateBtn').innerHTML = '✅ Validate';
                 }
             } catch (error) {
                 console.error('Error fetching progress:', error);
@@ -722,6 +861,9 @@
         }
 
         function updateUI(data) {
+            // Track status to prevent auto-refresh after completion
+            lastKnownStatus = data.status;
+            
             // Update status badge
             const badge = document.getElementById('statusBadge');
             badge.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
@@ -743,6 +885,18 @@
                 info.textContent = '❌ Analysis failed';
             }
             
+            // Update console output (NEW)
+            if (data.console_logs && data.console_logs.length > 0) {
+                const consoleSection = document.getElementById('consoleSection');
+                const consoleOutput = document.getElementById('consoleOutput');
+                consoleSection.style.display = 'block';
+                consoleOutput.innerHTML = data.console_logs.map(log => 
+                    `<div style="margin: 2px 0; color: #88c0d0;">${escapeHtml(log)}</div>`
+                ).join('');
+                // Auto-scroll to bottom
+                consoleOutput.scrollTop = consoleOutput.scrollHeight;
+            }
+            
             // Update errors
             if (data.errors && data.errors.length > 0) {
                 document.getElementById('errorSection').style.display = 'block';
@@ -752,12 +906,19 @@
                 ).join('');
             }
             
-            // Update stats and tables
-            if (data.results && data.results.summary) {
+            // Update stats and tables ONLY if we have new/updated data
+            // This prevents clearing data when backend resets or during idle state
+            if (data.results && data.results.summary && data.results.summary.total_items > 0) {
                 updateStats(data.results.summary);
                 updateTables(data.results);
                 allData = data.results;
             }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function updateStats(summary) {
@@ -789,7 +950,7 @@
             tbody.innerHTML = items.map(item => `
                 <tr data-updated="${item.updated_at}">
                     <td>${item.repo}</td>
-                    <td><strong>#${item.number}</strong></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
                     <td>${item.title}</td>
                     <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
                     <td><span class="badge badge-${item.state}">${item.state}</span></td>
@@ -812,7 +973,7 @@
             tbody.innerHTML = items.map(item => `
                 <tr data-updated="${item.updated_at}">
                     <td>${item.repo}</td>
-                    <td><strong>#${item.number}</strong></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
                     <td>${item.title}</td>
                     <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
                     <td><strong>${item.eta_data.estimate.toFixed(1)}h</strong></td>
@@ -835,7 +996,7 @@
             tbody.innerHTML = items.map(item => `
                 <tr>
                     <td>${item.repo}</td>
-                    <td><strong>#${item.number}</strong></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
                     <td>${item.title}</td>
                     <td><span class="badge badge-${item.state}">${item.state}</span></td>
                     <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
@@ -856,15 +1017,21 @@
                 return;
             }
             
-            // Sort by week (updated date) descending
-            const sorted = [...items].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+            // Sort by week_key descending (most recent first)
+            const sorted = [...items].sort((a, b) => {
+                const weekA = a.week_key || '0000_00';
+                const weekB = b.week_key || '0000_00';
+                return weekB.localeCompare(weekA);
+            });
             
             tbody.innerHTML = sorted.map((item, idx) => {
                 const created = new Date(item.created_at);
                 const closed = item.closed_at ? new Date(item.closed_at) : null;
                 const now = new Date();
-                const daysOpen = Math.floor((closed || now - created) / (1000 * 60 * 60 * 24));
-                const weekNum = getWeekNumber(new Date(item.updated_at));
+                const daysOpen = Math.floor(((closed || now) - created) / (1000 * 60 * 60 * 24));
+                
+                // Get week number from week_key (e.g., '2025_44' -> 'W44')
+                const weekDisplay = item.week_key ? `W${item.week_key.split('_')[1]}` : 'W??';
                 
                 // Get per-dev hours summary
                 const devHoursSummary = Object.entries(item.eta_data.dev_hours || {})
@@ -875,15 +1042,19 @@
                     .join(', ') || '-';
                 
                 const stageETA = item.eta_data.stage_totals?.ETA || 0;
-                const stageDev = item.eta_data.stage_totals?.Dev || 0;
+                const stageDev = item.eta_data.stage_totals?.Developing || 0;
                 const stageReview = item.eta_data.stage_totals?.Review || 0;
                 
+                // Use week_state for display instead of current state (to match CLI behavior)
+                const displayState = item.week_state || item.state;
+                const stateClass = displayState === 'open' ? 'badge-open' : displayState === 'closed' ? 'badge-closed' : 'badge-' + displayState;
+                
                 return `
-                    <tr data-order="${idx}" data-reported="${item.eta_data.total_reported}" data-updated="${item.updated_at}">
-                        <td><strong>W${weekNum}</strong></td>
+                    <tr data-order="${idx}" data-reported="${item.eta_data.total_reported}" data-updated="${item.updated_at}" data-week="${item.week_key}">
+                        <td><strong>${weekDisplay}</strong></td>
                         <td>${item.repo}</td>
-                        <td><strong>#${item.number}</strong></td>
-                        <td><span class="badge badge-${item.state}">${item.state}</span></td>
+                        <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
+                        <td><span class="badge ${stateClass}">${displayState}</span></td>
                         <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
                         <td><strong>${item.eta_data.estimate.toFixed(1)}h</strong></td>
                         <td>${item.eta_data.customer_estimate.toFixed(1)}h</td>
@@ -1138,17 +1309,18 @@
         function updateWeekTable(items) {
             const tbody = document.getElementById('weekTableBody');
             if (items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-icon">📅</div>No updates this week</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-icon">📅</div>No updates this week</td></tr>';
                 return;
             }
             
             tbody.innerHTML = items.map(item => `
                 <tr>
                     <td>${item.repo}</td>
-                    <td><strong>#${item.number}</strong></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
                     <td>${item.title}</td>
                     <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
                     <td><span class="badge badge-${item.state}">${item.state}</span></td>
+                    <td><strong>${(item.week_hours || 0).toFixed(1)}h</strong></td>
                     <td>${formatDate(item.updated_at)}</td>
                     <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
                 </tr>
@@ -1165,7 +1337,8 @@
             tbody.innerHTML = items.map(item => `
                 <tr>
                     <td>${item.repo}</td>
-                    <td><strong>#${item.number}</strong></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
+                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
                     <td>${item.title}</td>
                     <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
                     <td><span class="badge badge-${item.state}">${item.state}</span></td>
@@ -1249,9 +1422,10 @@
             }
         }
 
-        // Auto-refresh every 5 seconds when idle
+        // Auto-refresh only when truly idle (no analysis ever run or explicitly reset)
+        // Don't refresh after completion to preserve sort state and prevent data loss
         setInterval(() => {
-            if (!pollInterval) {
+            if (!pollInterval && lastKnownStatus === 'idle') {
                 updateProgress();
             }
         }, 5000);

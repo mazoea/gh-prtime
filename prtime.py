@@ -652,12 +652,22 @@ def pr_with_eta(gh, start_at: datetime, state: str = None, base: str = None, inc
 
     rec_pr_time = re.compile(r"[|]\s*ETA")
 
+    # Limit to max 1 year before today to avoid fetching too much old data
+    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+    effective_start_at = max(start_at, one_year_ago)
+
+    # Convert to string format for GitHub API 'since' parameter
+    since_date = effective_start_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    _logger.info(
+        f"Fetching items since {effective_start_at.date()} (original: {start_at.date()})")
+
     for p, ignored_pr in settings["projects"]:
         repo = gh.get_repo(p)
         _logger.info(repo.name)
         if include_issues:
             issues = repo.get_issues(state=state or 'all', sort='created',
-                                     direction="desc", labels=["ETA"])
+                                     direction="desc", labels=["ETA"], since=effective_start_at)
             _logger.info("Total ISSUES count: [%d]", issues.totalCount)
             for issue in tqdm.tqdm(issues, total=issues.totalCount):
                 if issue.created_at < start_at:
@@ -1061,6 +1071,149 @@ def find_hours_all(gh, start_date: datetime, output_md: str = None):
                     continue
                 r = eta_rel.md_hours(week_n, in_progress=(week_state != "closed"))
                 fout.write(f"{str(r)}\n")
+
+
+def find_hours_all_structured(gh, start_date: datetime, filter_state='all'):
+    """
+    Like find_hours_all() but returns structured data for web API instead of writing markdown.
+    Reuses all the same logic as find_hours_all() to ensure identical behavior.
+
+    Args:
+        gh: GitHub client
+        start_date: Start date for fetching PRs/issues
+        filter_state: 'all', 'open', or 'closed' to filter by state
+
+    Returns:
+        dict with structure:
+        {
+            'weeks': [
+                {
+                    'week_key': '2025_45',
+                    'week_number': 45,
+                    'year': 2025,
+                    'monday': '2025-11-04',
+                    'sunday': '2025-11-10',
+                    'items': [
+                        {
+                            'repo': 'mazoea/c-image-to-text',
+                            'number': 1820,
+                            'title': 'Issue dp advent jira 533',
+                            'url': 'https://github.com/...',
+                            'state': 'closed',
+                            'week_state': 'closed',  # state during this week
+                            'type': 'pr',
+                            'created_at': '2025-09-03T13:31:56Z',
+                            'updated_at': '2025-11-03T12:43:00Z',
+                            'closed_at': '2025-11-03T12:43:00Z',
+                            'days_open': 61,
+                            'hours_data': hours_row._d dict
+                        },
+                        ...
+                    ]
+                },
+                ...
+            ],
+            'missing_eta': [list of items without ETA],
+            'summary': {...}
+        }
+    """
+    def _monday_date(year, week):
+        first = date(year, 1, 1)
+        base = 1 if first.isocalendar()[1] == 1 else 8
+        return first + timedelta(days=base - first.isocalendar()[2] + 7 * (week - 1))
+
+    weeks = pr_with_eta_hours(gh, start_date)
+
+    result = {
+        'weeks': [],
+        'missing_eta': [],
+        'summary': {
+            'total_weeks': len(weeks),
+            'total_items': 0,
+            'items_with_eta': 0,
+            'items_without_eta': 0,
+            'items_filtered': 0
+        }
+    }
+
+    sort_states = {'closed': 0, 'created': 1, 'open': 2}
+    week_keys = sorted(weeks.keys(), reverse=True)
+
+    for week in week_keys:
+        year, week_n = week.split("_")
+        year = int(year)
+        week_n = int(week_n)
+        monday = _monday_date(year, week_n)
+        sunday = monday + timedelta(days=6)
+
+        week_data = {
+            'week_key': week,
+            'week_number': week_n,
+            'year': year,
+            'monday': str(monday),
+            'sunday': str(sunday),
+            'items': []
+        }
+
+        iss_pr_arr = sorted(weeks[week], key=lambda x: sort_states.get(x[2], 10))
+
+        for repo_name, iss_pr, week_state in iss_pr_arr:
+            result['summary']['total_items'] += 1
+
+            # Apply state filter
+            if filter_state != 'all':
+                if filter_state == 'open' and iss_pr.state != 'open':
+                    result['summary']['items_filtered'] += 1
+                    continue
+                if filter_state == 'closed' and iss_pr.state != 'closed':
+                    result['summary']['items_filtered'] += 1
+                    continue
+
+            iss_pr_id = get_pr_id(repo_name, iss_pr)
+            eta = parse_eta(iss_pr, iss_pr_id)
+
+            if eta is None:
+                result['summary']['items_without_eta'] += 1
+                result['missing_eta'].append({
+                    'repo': repo_name,
+                    'number': iss_pr.number,
+                    'title': iss_pr.title,
+                    'url': iss_pr.html_url,
+                    'state': iss_pr.state,
+                    'type': 'issue' if is_issue(iss_pr) else 'pr'
+                })
+                continue
+
+            result['summary']['items_with_eta'] += 1
+
+            eta_rel = eta.relative_eta(monday)
+            if eta_rel is None:
+                _logger.info(f"Could not get relative ETA for {iss_pr_id} in week {week}")
+                continue
+
+            # Get the hours_row object - same as command line
+            r = eta_rel.md_hours(week_n, in_progress=(week_state != "closed"))
+
+            # Convert hours_row to dict
+            item_data = {
+                'repo': repo_name,
+                'number': iss_pr.number,
+                'title': iss_pr.title,
+                'url': iss_pr.html_url,
+                'state': iss_pr.state,
+                'week_state': week_state,
+                'type': 'issue' if is_issue(iss_pr) else 'pr',
+                'created_at': iss_pr.created_at.isoformat() if iss_pr.created_at else None,
+                'updated_at': iss_pr.updated_at.isoformat() if iss_pr.updated_at else None,
+                'closed_at': iss_pr.closed_at.isoformat() if iss_pr.closed_at else None,
+                'hours_data': dict(r._d)  # Convert OrderedDict to regular dict
+            }
+
+            week_data['items'].append(item_data)
+
+        result['weeks'].append(week_data)
+
+    return result
 
 
 def store(gh, out_file):

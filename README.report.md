@@ -12,9 +12,3 @@ python prtime.py --validate --state=closed --check-last=12w
 ```
 python prtime.py --hours --state=closed --check-last=12w
 ```
-
-
-
-
-###
-1. 15 minutes, fixed 2 code issues
