@@ -696,31 +696,34 @@ def pr_with_eta_hours(gh, start_at: datetime):
             raise StopIteration()
         if rec_pr_time.search(iss_or_pr.body or "") is None:
             return True
-        # ignore issues that are too old
-        if iss_or_pr.created_at < start_at:
-            return True
         return False
 
     def process_one(repo_name, iss_or_pr):
         created = iss_or_pr.created_at
         closed = iss_or_pr.closed_at
-        week_d_start, year_start = created.isocalendar()[1], created.isocalendar()[0]
-        end_d = closed.isocalendar() if closed else datetime.now().isocalendar()
-        week_d_end, year_end = end_d[1], end_d[0]
+        start_iso = created.isocalendar()
+        week_d_start, year_start = start_iso[1], start_iso[0]
+        end_d = closed or datetime.now()
+        end_iso = end_d.isocalendar()
+        week_d_end, year_end = end_iso[1], end_iso[0]
         is_closed = closed is not None
 
+        # iterate using date arithmetic to correctly handle year boundaries
         week_year = []
-        use_year = year_start
-        week_d_i = week_d_start
-        while week_d_i != week_d_end + 1:
-            if week_d_i == 0:
-                use_year = year_end
-            week_year.append((week_d_i, use_year))
-            week_d_i = (week_d_i + 1) % 53
+        # find the Monday of the start week
+        d = created.date() if isinstance(created, datetime) else created
+        d = d - timedelta(days=d.weekday())
+        end_date = end_d.date() if isinstance(end_d, datetime) else end_d
+        while d <= end_date:
+            iso = d.isocalendar()
+            week_year.append((iso[1], iso[0]))
+            d += timedelta(weeks=1)
         #
         if len(week_year) > settings["warn_if_opened_longer_than"]:
             lately = datetime.now() - timedelta(days=14)
-            updated, week = was_updated(iss_or_pr, since=lately.date())
+            updated, week = was_updated(
+                iss_or_pr, since=lately.date(),
+                update_events=("committed", "commented"))
             # only ignore if not updated lately
             if not updated:
                 if iss_or_pr.state != "closed":
@@ -730,9 +733,9 @@ def pr_with_eta_hours(gh, start_at: datetime):
 
         for week_d, year in week_year:
             week_state = 'open'
-            if week_d == week_d_start:
+            if week_d == week_d_start and year == year_start:
                 week_state = 'created'
-            if week_d == week_d_end and is_closed:
+            if week_d == week_d_end and year == year_end and is_closed:
                 week_state = 'closed'
             weeks[f"{year}_{week_d:02}"].append((repo_name, iss_or_pr, week_state))
 
