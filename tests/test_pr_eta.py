@@ -6,6 +6,12 @@ _this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_this_dir, ".."))
 
 
+class MockPR:
+    def __init__(self, body):
+        self.body = body
+        self.html_url = "https://github.com/test/repo/pull/1"
+
+
 class Testbasic(unittest.TestCase):
 
     def testparse(self):
@@ -21,7 +27,7 @@ class Testbasic(unittest.TestCase):
 | ETA est.             |      |       |       |         |     40  |
 | ETA cust.           |   -  |   -  |   -   |   -     |        40 |
         """
-        d = parse_eta(s)
+        d = parse_eta(MockPR(s), "test:1:test PR")
         self.assertTrue(d is not None)
 
 

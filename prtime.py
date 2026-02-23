@@ -372,14 +372,14 @@ class eta_table:
             return False
 
         def has_name(row, name):
-            return name in row.name.lower()
+            return name.lower() in row.name.lower()
 
         # verification #2
-        if has_name(self.rows[-1], ETA.key_eta_cust):
+        if not has_name(self.rows[-1], ETA.key_eta_cust):
             _logger.critical("Cannot find ETA cust [%s]", self.pr_id)
             return False
 
-        if has_name(self.rows[-3], ETA.key_total):
+        if not has_name(self.rows[-3], ETA.key_total):
             _logger.critical("Cannot find Total [%s]", self.pr_id)
             return False
 
