@@ -696,15 +696,18 @@ def pr_with_eta_hours(gh, start_at: datetime):
             raise StopIteration()
         if rec_pr_time.search(iss_or_pr.body or "") is None:
             return True
-        # ignore issues that are too old
+        # ignore issues that are too old, but not if they were closed during the report period
         if iss_or_pr.created_at < start_at:
-            return True
+            if iss_or_pr.closed_at is None or iss_or_pr.closed_at < start_at:
+                return True
         return False
 
     def process_one(repo_name, iss_or_pr):
-        created = iss_or_pr.created_at
         closed = iss_or_pr.closed_at
-        week_d_start, year_start = created.isocalendar()[1], created.isocalendar()[0]
+        # For PRs/issues created before the report period, clamp to start_at to avoid
+        # adding entries for weeks that predate the report
+        effective_created = max(iss_or_pr.created_at, start_at)
+        week_d_start, year_start = effective_created.isocalendar()[1], effective_created.isocalendar()[0]
         end_d = closed.isocalendar() if closed else datetime.now().isocalendar()
         week_d_end, year_end = end_d[1], end_d[0]
         is_closed = closed is not None
