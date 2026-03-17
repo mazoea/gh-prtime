@@ -2,7 +2,6 @@ import sys
 import os
 import unittest
 from datetime import datetime, timedelta
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -13,11 +12,7 @@ def _build_week_year(created, closed):
     """
         Replicate the week iteration logic from process_one to test it.
     """
-    start_iso = created.isocalendar()
-    week_d_start, year_start = start_iso[1], start_iso[0]
     end_d = closed or datetime.now()
-    end_iso = end_d.isocalendar()
-    week_d_end, year_end = end_iso[1], end_iso[0]
 
     week_year = []
     d = created.date() if isinstance(created, datetime) else created
@@ -48,7 +43,7 @@ class Testbasic(unittest.TestCase):
         pr = MagicMock()
         pr.body = s
         lines, ignored = parse_eta_lines(pr)
-        self.assertTrue(len(lines) > 0)
+        self.assertGreater(len(lines), 0)
         self.assertFalse(ignored)
 
 
