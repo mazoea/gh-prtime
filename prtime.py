@@ -115,7 +115,8 @@ def log_err(msg, pr, pr_id):
     _logger.info(tmpl, msg, pr_id, pr.html_url)
 
 
-_HOURS_EXPR_RE = re.compile(r"^\s*[\d\s+\-*/.()]+\s*$")
+_HOURS_EXPR_RE = re.compile(r"^[ \t]*[0-9 \t+\-*/.()]+[ \t]*$")
+_HOURS_MAX_LEN = 256
 
 
 def sum_hours(s, pr_id, pr_html=None):
@@ -135,6 +136,8 @@ def sum_hours(s, pr_id, pr_html=None):
         text = str(s).strip()
         if not text or not _HOURS_EXPR_RE.match(text):
             raise ValueError(f"non-arithmetic input: {text!r}")
+        if len(text) > _HOURS_MAX_LEN:
+            raise ValueError(f"input too long ({len(text)} > {_HOURS_MAX_LEN})")
         # ast.literal_eval doesn't allow operators, so parse + walk the AST
         # and only allow numeric arithmetic nodes.
         tree = ast.parse(text, mode="eval")
