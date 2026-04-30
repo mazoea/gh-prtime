@@ -130,9 +130,9 @@ def _safe_sum_hours(s: str) -> float:
     """
         Parse a single ETA-table cell into a float without using ``eval``.
 
-        Accepts additive expressions over non-negative decimals, with either
-        ``,`` or ``.`` as the decimal separator (Czech tables routinely use
-        comma). Empty / ``-`` cells evaluate to 0.
+        Accepts sums of signed decimal numbers using ``+`` / ``-``, with
+        either ``,`` or ``.`` as the decimal separator (Czech tables
+        routinely use comma). Empty / ``-`` cells evaluate to 0.
     """
     s = s.strip()
     if not s or s == "-":
@@ -529,7 +529,7 @@ class eta_table:
             raise Exception("INVALID relative_eta")
 
         created_that_week = from_monday <= self.pr.created_at.date()
-        for_not_finished_week = datetime.now().date() <= till_sunday
+        for_not_finished_week = datetime.now(timezone.utc).date() <= till_sunday
         closed_that_week = False
         if self.pr.closed_at is not None and self.pr.closed_at.date() <= till_sunday:
             closed_that_week = True
@@ -770,10 +770,10 @@ def pr_with_eta_hours(gh, start_at: datetime):
         # (e.g. 2026), so we iterate week-Mondays directly instead.
         start_iso = created.isocalendar()
         end_iso = end_dt.isocalendar()
-        week_d_start = start_iso[1]
-        week_d_end = end_iso[1]
-        monday = date.fromisocalendar(start_iso[0], start_iso[1], 1)
-        end_monday = date.fromisocalendar(end_iso[0], end_iso[1], 1)
+        start_year_week = (start_iso[0], start_iso[1])
+        end_year_week = (end_iso[0], end_iso[1])
+        monday = date.fromisocalendar(*start_year_week, 1)
+        end_monday = date.fromisocalendar(*end_year_week, 1)
         week_year = []
         while monday <= end_monday:
             iso_year, iso_week, _ = monday.isocalendar()
@@ -782,7 +782,7 @@ def pr_with_eta_hours(gh, start_at: datetime):
         is_closed = closed is not None
         #
         if len(week_year) > settings["warn_if_opened_longer_than"]:
-            lately = datetime.now() - timedelta(days=14)
+            lately = datetime.now(timezone.utc) - timedelta(days=14)
             updated, week = was_updated(iss_or_pr, since=lately.date())
             # only ignore if not updated lately
             if not updated:
@@ -791,11 +791,15 @@ def pr_with_eta_hours(gh, start_at: datetime):
                         f"IGNORING: OPENED for too long [{len(week_year)} weeks][{iss_or_pr.created_at}]: {repo_name}:{iss_or_pr.number} [{iss_or_pr.html_url}] [{iss_or_pr.title}]")
                 return
 
+        # Compare full (year, week) tuples for the start/end markers. ISO
+        # week numbers can recur across years (e.g. week 5 in 2025 and 2026),
+        # so for items spanning more than 52 weeks comparing only the week
+        # number would mark multiple weeks as 'created' / 'closed'.
         for week_d, year in week_year:
             week_state = 'open'
-            if week_d == week_d_start:
+            if (year, week_d) == start_year_week:
                 week_state = 'created'
-            if week_d == week_d_end and is_closed:
+            if (year, week_d) == end_year_week and is_closed:
                 week_state = 'closed'
             weeks[f"{year}_{week_d:02}"].append((repo_name, iss_or_pr, week_state))
 
@@ -1043,7 +1047,7 @@ def store_checkpoint(gh, start_date: datetime, dry=False):
     """
         Find ETA, check if in the last week there was an update, if so, store the checkpoint.
     """
-    today = datetime.today().date()
+    today = datetime.now(timezone.utc).date()
     monday = prev_monday()
     _logger.info(
         f"Checking updates since [{monday}] till [{today}] totalling [{today - monday}] days.")
@@ -1360,8 +1364,10 @@ if __name__ == '__main__':
         rec = re.compile(r"^(\d+)w$")
         m = rec.match(flags.check_last)
         if m:
-            since = datetime.now() - timedelta(weeks=int(m.group(1)))
-            settings["start_time"] = since.replace(tzinfo=timezone.utc)
+            # `start_time` is compared against PyGithub aware UTC datetimes,
+            # so compute it in UTC directly. Replacing tzinfo on a local
+            # naive `datetime.now()` would mislabel local time as UTC.
+            settings["start_time"] = datetime.now(timezone.utc) - timedelta(weeks=int(m.group(1)))
         else:
             _logger.critical(f"Unknown format {flags.check_last}")
             sys.exit(1)

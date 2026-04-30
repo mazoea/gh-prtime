@@ -531,16 +531,29 @@ def start_analysis():
     })
 
 
+def _snapshot_progress():
+    """
+        Return a deepcopy of the global ``progress_state`` taken under
+        ``_progress_lock``. Background workers mutate the same dict
+        (including its nested lists / dicts), so jsonify-ing the live
+        object risks observing torn nested state — and can raise if
+        the dict changes during serialization.
+    """
+    import copy as _copy
+    with _progress_lock:
+        return _copy.deepcopy(progress_state)
+
+
 @app.route('/api/progress')
 def get_progress():
     """Get current progress"""
-    return jsonify(progress_state)
+    return jsonify(_snapshot_progress())
 
 
 @app.route('/api/results')
 def get_results():
     """Get final results"""
-    return jsonify(progress_state['results'])
+    return jsonify(_snapshot_progress()['results'])
 
 
 @app.route('/api/start-validation', methods=['POST'])
