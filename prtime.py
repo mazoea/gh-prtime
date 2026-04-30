@@ -12,6 +12,7 @@ ETA parser for github issues/PRs.
 """
 import os
 import sys
+import ast
 import copy
 import logging
 import argparse
@@ -114,12 +115,36 @@ def log_err(msg, pr, pr_id):
     _logger.info(tmpl, msg, pr_id, pr.html_url)
 
 
+_HOURS_EXPR_RE = re.compile(r"^\s*[\d\s+\-*/.()]+\s*$")
+
+
 def sum_hours(s, pr_id, pr_html=None):
     """
         Try to sum the cell.
+
+        The cell is part of a markdown table inside a PR body, so the
+        author of any PR controls the string. Only accept arithmetic
+        over digits and the operators +-*/().  Anything else (function
+        calls, names, attribute access, dunder tricks) is rejected.
+        This used to be `float(eval(s))` which let any PR author run
+        arbitrary Python in whatever process scraped their PR body.
     """
     try:
-        return float(eval(s))
+        if s is None:
+            raise ValueError("empty")
+        text = str(s).strip()
+        if not text or not _HOURS_EXPR_RE.match(text):
+            raise ValueError(f"non-arithmetic input: {text!r}")
+        # ast.literal_eval doesn't allow operators, so parse + walk the AST
+        # and only allow numeric arithmetic nodes.
+        tree = ast.parse(text, mode="eval")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp,
+                                  ast.Add, ast.Sub, ast.Mult, ast.Div,
+                                  ast.USub, ast.UAdd, ast.Constant, ast.Load)):
+                continue
+            raise ValueError(f"disallowed node: {type(node).__name__}")
+        return float(eval(compile(tree, "<sum_hours>", "eval"), {"__builtins__": {}}, {}))
     except Exception:
         _logger.info(f"Cannot parse [{s}] in [{pr_id}] [{pr_html or ''}]")
     return -1.
