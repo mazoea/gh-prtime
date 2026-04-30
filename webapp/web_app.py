@@ -7,7 +7,6 @@ import sys
 import threading
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
-from flask_cors import CORS
 import logging
 
 # Add parent directory (for prtime module) to path
@@ -22,7 +21,9 @@ from prtime import (
 )
 
 app = Flask(__name__)
-CORS(app)
+# Single-origin app: no CORS, the dashboard is served by Flask itself.
+# Adding flask_cors.CORS(app) without origin restrictions combined with the
+# absence of auth would let any page in your browser drive /api/start.
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +31,12 @@ logging.basicConfig(
     level=logging.INFO
 )
 _logger = logging.getLogger(__name__)
+
+# Lock guarding the global progress_state. Background analysis/validation
+# threads mutate the dict while /api/progress reads it; without a lock the
+# dashboard occasionally observes torn state, and the "already running"
+# check below is racy across two near-simultaneous /api/start requests.
+_progress_lock = threading.Lock()
 
 # Global state
 progress_state = {
@@ -498,29 +505,27 @@ def index():
 @app.route('/api/start', methods=['POST'])
 def start_analysis():
     """Start background analysis"""
-    global progress_state
-    
-    if progress_state['status'] == 'running':
-        return jsonify({'error': 'Analysis already running'}), 400
-    
     data = request.get_json() or {}
     settings_file = data.get('settings_file', '../settings.json')
     max_items = data.get('max_items', 400)  # Default to 400 to catch more items
     filter_state = data.get('state', 'all')  # 'all', 'open', or 'closed' like prtime.py --state
-    
+
     # Validate filter_state
     if filter_state not in ['all', 'open', 'closed']:
         return jsonify({'error': f'Invalid state: {filter_state}. Must be all, open, or closed'}), 400
-    
-    reset_progress()
-    
-    # Start background thread
+
+    with _progress_lock:
+        if progress_state['status'] == 'running':
+            return jsonify({'error': 'Analysis already running'}), 400
+        reset_progress()
+        progress_state['status'] = 'running'
+
     thread = threading.Thread(target=analyze_repository, args=(settings_file, max_items, filter_state))
     thread.daemon = True
     thread.start()
-    
+
     return jsonify({
-        'message': 'Analysis started', 
+        'message': 'Analysis started',
         'max_items': max_items,
         'state': filter_state
     })
@@ -541,29 +546,27 @@ def get_results():
 @app.route('/api/start-validation', methods=['POST'])
 def start_validation():
     """Start background validation"""
-    global progress_state
-    
-    if progress_state['status'] == 'running':
-        return jsonify({'error': 'Analysis or validation already running'}), 400
-    
     data = request.get_json() or {}
     settings_file = data.get('settings_file', '../settings.json')
     filter_state = data.get('state', 'closed')  # Default to 'closed' for validation
     filter_week = data.get('week', None)  # Optional week filter like '2025_45'
-    
+
     # Validate filter_state
     if filter_state not in ['all', 'open', 'closed']:
         return jsonify({'error': f'Invalid state: {filter_state}. Must be all, open, or closed'}), 400
-    
-    reset_progress()
-    
-    # Start background thread
+
+    with _progress_lock:
+        if progress_state['status'] == 'running':
+            return jsonify({'error': 'Analysis or validation already running'}), 400
+        reset_progress()
+        progress_state['status'] = 'running'
+
     thread = threading.Thread(target=validate_repository, args=(settings_file, filter_state, filter_week))
     thread.daemon = True
     thread.start()
-    
+
     return jsonify({
-        'message': 'Validation started', 
+        'message': 'Validation started',
         'state': filter_state,
         'week': filter_week or 'all'
     })
@@ -616,9 +619,9 @@ def get_available_weeks():
             'weeks': week_list,
             'total_weeks': len(week_list)
         })
-    except Exception as e:
+    except Exception:
         _logger.exception("Failed to get weeks")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to fetch weeks (see server logs)'}), 500
 
 
 if __name__ == '__main__':
@@ -631,13 +634,22 @@ if __name__ == '__main__':
             for k, v in lines:
                 if k not in os.environ:
                     os.environ[k] = v
-    
+
+    # Bind localhost-only and disable Werkzeug debugger by default. The
+    # dashboard has no auth, so binding to 0.0.0.0 with debug=True exposes
+    # the Werkzeug debugger PIN on every interface (RCE if ever reached).
+    # Override via PRTIME_HOST / PRTIME_PORT / PRTIME_DEBUG for explicit
+    # opt-in (e.g. PRTIME_DEBUG=1 in dev).
+    host = os.environ.get('PRTIME_HOST', '127.0.0.1')
+    port = int(os.environ.get('PRTIME_PORT', '5000'))
+    debug = os.environ.get('PRTIME_DEBUG', '').lower() in ('1', 'true', 'yes')
+
     print("\n" + "="*60)
     print(">>> PRTime Web Dashboard Starting")
     print("="*60)
-    print("Open: http://localhost:5000")
+    print(f"Open: http://{host}:{port}")
     print(f"Directory: {_this_dir}")
-    print("Default limit: 20 items (adjustable in UI)")
+    print(f"Debug: {debug}")
     print("="*60 + "\n")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+    app.run(debug=debug, host=host, port=port)

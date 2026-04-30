@@ -1,4 +1,4 @@
-Flask>=2.0.0
-Flask-CORS>=3.0.0
+Flask>=3.0.0
 PyGithub>=2.0
+python-dateutil>=2.8
 tqdm

@@ -916,9 +916,30 @@
         }
         
         function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = String(text);
             return div.innerHTML;
+        }
+
+        // Validate a URL is safe to use as an href. PR/issue URLs come from
+        // the GitHub API (they're origin-pinned), but if a future code path
+        // ever lets an attacker pick the value, only allow http(s) so we
+        // can't render `javascript:`/`data:` URIs.
+        function safeUrl(u) {
+            if (!u) return '#';
+            try {
+                const parsed = new URL(String(u), window.location.origin);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    return parsed.toString();
+                }
+            } catch (e) { /* fall through */ }
+            return '#';
+        }
+
+        // Convenience: returns an href-attribute-safe escaped URL.
+        function safeHref(u) {
+            return escapeHtml(safeUrl(u));
         }
 
         function updateStats(summary) {
@@ -948,17 +969,17 @@
             }
             
             tbody.innerHTML = items.map(item => `
-                <tr data-updated="${item.updated_at}">
-                    <td>${item.repo}</td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td>${item.title}</td>
-                    <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
-                    <td><span class="badge badge-${item.state}">${item.state}</span></td>
+                <tr data-updated="${escapeHtml(item.updated_at)}">
+                    <td>${escapeHtml(item.repo)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                    <td>${escapeHtml(item.title)}</td>
+                    <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
+                    <td><span class="badge badge-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
                     <td><strong>${item.eta_data.estimate.toFixed(1)}h</strong></td>
                     <td>${item.eta_data.total_reported.toFixed(1)}h</td>
                     <td>${formatDevHours(item.eta_data.dev_hours)}</td>
-                    <td data-updated="${item.updated_at}">${item.updated_this_week ? '<span class="badge badge-updated">This Week</span>' : formatDate(item.updated_at)}</td>
-                    <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
+                    <td data-updated="${escapeHtml(item.updated_at)}">${item.updated_this_week ? '<span class="badge badge-updated">This Week</span>' : formatDate(item.updated_at)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">View →</a></td>
                 </tr>
             `).join('');
         }
@@ -971,17 +992,17 @@
             }
             
             tbody.innerHTML = items.map(item => `
-                <tr data-updated="${item.updated_at}">
-                    <td>${item.repo}</td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td>${item.title}</td>
-                    <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
+                <tr data-updated="${escapeHtml(item.updated_at)}">
+                    <td>${escapeHtml(item.repo)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                    <td>${escapeHtml(item.title)}</td>
+                    <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
                     <td><strong>${item.eta_data.estimate.toFixed(1)}h</strong></td>
                     <td>${item.eta_data.customer_estimate.toFixed(1)}h</td>
                     <td>${item.eta_data.total_reported.toFixed(1)}h</td>
                     <td>${formatDevHours(item.eta_data.dev_hours)}</td>
-                    <td data-updated="${item.closed_at}">${formatDate(item.closed_at)}</td>
-                    <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
+                    <td data-updated="${escapeHtml(item.closed_at)}">${formatDate(item.closed_at)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">View →</a></td>
                 </tr>
             `).join('');
         }
@@ -995,17 +1016,17 @@
             
             tbody.innerHTML = items.map(item => `
                 <tr>
-                    <td>${item.repo}</td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td>${item.title}</td>
-                    <td><span class="badge badge-${item.state}">${item.state}</span></td>
-                    <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
+                    <td>${escapeHtml(item.repo)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                    <td>${escapeHtml(item.title)}</td>
+                    <td><span class="badge badge-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
+                    <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
                     <td>
                         <div style="display: flex; flex-direction: column; gap: 5px;">
-                            ${item.eta_errors.map(e => `<span class="badge badge-error">${e}</span>`).join('')}
+                            ${item.eta_errors.map(e => `<span class="badge badge-error">${escapeHtml(e)}</span>`).join('')}
                         </div>
                     </td>
-                    <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">View →</a></td>
                 </tr>
             `).join('');
         }
@@ -1050,12 +1071,12 @@
                 const stateClass = displayState === 'open' ? 'badge-open' : displayState === 'closed' ? 'badge-closed' : 'badge-' + displayState;
                 
                 return `
-                    <tr data-order="${idx}" data-reported="${item.eta_data.total_reported}" data-updated="${item.updated_at}" data-week="${item.week_key}">
-                        <td><strong>${weekDisplay}</strong></td>
-                        <td>${item.repo}</td>
-                        <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                        <td><span class="badge ${stateClass}">${displayState}</span></td>
-                        <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
+                    <tr data-order="${idx}" data-reported="${item.eta_data.total_reported}" data-updated="${escapeHtml(item.updated_at)}" data-week="${escapeHtml(item.week_key)}">
+                        <td><strong>${escapeHtml(weekDisplay)}</strong></td>
+                        <td>${escapeHtml(item.repo)}</td>
+                        <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                        <td><span class="badge ${escapeHtml(stateClass)}">${escapeHtml(displayState)}</span></td>
+                        <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
                         <td><strong>${item.eta_data.estimate.toFixed(1)}h</strong></td>
                         <td>${item.eta_data.customer_estimate.toFixed(1)}h</td>
                         <td>${item.eta_data.total_reported.toFixed(1)}h</td>
@@ -1064,10 +1085,10 @@
                         <td>${stageReview.toFixed(1)}h</td>
                         <td>${item.eta_data.dev_hours_total.toFixed(1)}h</td>
                         <td style="font-size: 0.85em;">${devHoursSummary}</td>
-                        <td data-updated="${item.created_at}">${formatDate(item.created_at)}</td>
-                        <td data-updated="${item.closed_at}">${closed ? formatDate(item.closed_at) : '-'}</td>
+                        <td data-updated="${escapeHtml(item.created_at)}">${formatDate(item.created_at)}</td>
+                        <td data-updated="${escapeHtml(item.closed_at)}">${closed ? formatDate(item.closed_at) : '-'}</td>
                         <td>${daysOpen}d</td>
-                        <td><a href="${item.url}" target="_blank" class="issue-link">→</a></td>
+                        <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">→</a></td>
                     </tr>
                 `;
             }).join('');
@@ -1315,14 +1336,14 @@
             
             tbody.innerHTML = items.map(item => `
                 <tr>
-                    <td>${item.repo}</td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td>${item.title}</td>
-                    <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
-                    <td><span class="badge badge-${item.state}">${item.state}</span></td>
+                    <td>${escapeHtml(item.repo)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                    <td>${escapeHtml(item.title)}</td>
+                    <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
+                    <td><span class="badge badge-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
                     <td><strong>${(item.week_hours || 0).toFixed(1)}h</strong></td>
                     <td>${formatDate(item.updated_at)}</td>
-                    <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">View →</a></td>
                 </tr>
             `).join('');
         }
@@ -1336,14 +1357,13 @@
             
             tbody.innerHTML = items.map(item => `
                 <tr>
-                    <td>${item.repo}</td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td><a href="${item.url}" target="_blank" style="color: var(--primary); text-decoration: none;"><strong>#${item.number}</strong></a></td>
-                    <td>${item.title}</td>
-                    <td><span class="badge badge-${item.type}">${item.type.toUpperCase()}</span></td>
-                    <td><span class="badge badge-${item.state}">${item.state}</span></td>
+                    <td>${escapeHtml(item.repo)}</td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;"><strong>#${escapeHtml(item.number)}</strong></a></td>
+                    <td>${escapeHtml(item.title)}</td>
+                    <td><span class="badge badge-${escapeHtml(item.type)}">${escapeHtml(String(item.type).toUpperCase())}</span></td>
+                    <td><span class="badge badge-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
                     <td>${item.parse_error ? '<span class="badge badge-error">Parse Error</span>' : '<span class="badge badge-warning">No Table</span>'}</td>
-                    <td><a href="${item.url}" target="_blank" class="issue-link">View →</a></td>
+                    <td><a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="issue-link">View →</a></td>
                 </tr>
             `).join('');
         }
@@ -1351,7 +1371,7 @@
         function formatDevHours(devHours) {
             return Object.entries(devHours).map(([dev, stages]) => {
                 const total = Object.values(stages).reduce((a, b) => a + b, 0);
-                return `<span class="dev-chip"><span class="dev-name">${dev}</span>: ${total.toFixed(1)}h</span>`;
+                return `<span class="dev-chip"><span class="dev-name">${escapeHtml(dev)}</span>: ${total.toFixed(1)}h</span>`;
             }).join('');
         }
 

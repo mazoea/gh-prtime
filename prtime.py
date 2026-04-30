@@ -61,9 +61,9 @@ def load_settings(file_str: str):
     cfg["start_time"] = datetime.strptime(
         cfg["start_time"], r"%Y-%m-%d").replace(tzinfo=timezone.utc)
     # abs paths
-    for k, v in settings.items():
+    for k, v in cfg.items():
         if isinstance(v, str) and v.startswith("./"):
-            settings[k] = os.path.join(_this_dir, v[2:])
+            cfg[k] = os.path.join(_this_dir, v[2:])
 
     cfg["TRACKER_LINK"] = os.environ.get('TRACKER_LINK', 'XXXlink')
     cfg["CUSTOMER"] = os.environ.get('CUSTOMER', 'XXXcustomer')
@@ -79,15 +79,16 @@ settings = {}
 
 def prev_monday(force_prev=True) -> date:
     """
-        `force_prev` - if today is monday, return last monday
+        `force_prev` - if today is monday, return last monday.
+
+        Uses UTC so the boundary stays consistent with PyGithub timestamps,
+        which are also UTC. ``datetime.today()`` is local-time-naive and
+        silently shifts the week boundary around midnight.
     """
-    today = datetime.today()
-    if force_prev:
-        weeks = 0 if today.weekday() != 0 else -1
-    else:
-        weeks = 0
-    monday = today + timedelta(days=-today.weekday(), weeks=weeks)
-    return monday.date()
+    today = datetime.now(timezone.utc).date()
+    weekday = today.weekday()  # Mon=0..Sun=6
+    extra_weeks = 1 if (force_prev and weekday == 0) else 0
+    return today - timedelta(days=weekday + 7 * extra_weeks)
 
 
 # =================
@@ -114,13 +115,39 @@ def log_err(msg, pr, pr_id):
     _logger.info(tmpl, msg, pr_id, pr.html_url)
 
 
+_rec_hours_token = re.compile(r'[+-]?(?:\d+\.?\d*|\.\d+)')
+_rec_hours_expr = re.compile(
+    r'^[+-]?(?:\d+\.?\d*|\.\d+)(?:[+-](?:\d+\.?\d*|\.\d+))*$'
+)
+
+
+def _safe_sum_hours(s: str) -> float:
+    """
+        Parse a single ETA-table cell into a float without using ``eval``.
+
+        Accepts additive expressions over non-negative decimals, with either
+        ``,`` or ``.`` as the decimal separator (Czech tables routinely use
+        comma). Empty / ``-`` cells evaluate to 0.
+    """
+    s = s.strip()
+    if not s or s == "-":
+        return 0.0
+    # comma-as-decimal -> dot-as-decimal (only between digits)
+    s = re.sub(r'(\d),(\d)', r'\1.\2', s)
+    # collapse internal whitespace
+    s = re.sub(r'\s+', '', s)
+    if not _rec_hours_expr.match(s):
+        raise ValueError(f"Cannot parse hours expression: {s!r}")
+    return sum(float(t) for t in _rec_hours_token.findall(s))
+
+
 def sum_hours(s, pr_id, pr_html=None):
     """
         Try to sum the cell.
     """
     try:
-        return float(eval(s))
-    except Exception:
+        return _safe_sum_hours(s)
+    except (ValueError, ArithmeticError):
         _logger.info(f"Cannot parse [{s}] in [{pr_id}] [{pr_html or ''}]")
     return -1.
 
@@ -372,14 +399,15 @@ class eta_table:
             return False
 
         def has_name(row, name):
-            return name in row.name.lower()
+            return name.lower() in row.name.lower()
 
-        # verification #2
-        if has_name(self.rows[-1], ETA.key_eta_cust):
+        # verification #2: the named row must be present, otherwise the table
+        # layout doesn't match what the rest of the parser assumes.
+        if not has_name(self.rows[-1], ETA.key_eta_cust):
             _logger.critical("Cannot find ETA cust [%s]", self.pr_id)
             return False
 
-        if has_name(self.rows[-3], ETA.key_total):
+        if not has_name(self.rows[-3], ETA.key_total):
             _logger.critical("Cannot find Total [%s]", self.pr_id)
             return False
 
@@ -592,6 +620,17 @@ def parse_eta_lines(pr) -> tuple:
     return l_arr, ignored
 
 
+def parse_eta_body(body: str, pr_id: str, html_url: str = "") -> typing.Optional[eta_table]:
+    """Parse an ETA table from a raw markdown body string.
+
+    Test-friendly entry point: builds a minimal stand-in for a PyGithub
+    PullRequest/Issue so the rest of the pipeline can run without network
+    calls.
+    """
+    from types import SimpleNamespace
+    return parse_eta(SimpleNamespace(body=body, html_url=html_url), pr_id)
+
+
 def parse_eta(pr, pr_id) -> typing.Optional[eta_table]:
     """
 | Phases            | JH  |  JP  | TM |   JM | Total  |
@@ -714,19 +753,25 @@ def pr_with_eta_hours(gh, start_at: datetime):
     def process_one(repo_name, iss_or_pr):
         created = iss_or_pr.created_at
         closed = iss_or_pr.closed_at
-        week_d_start, year_start = created.isocalendar()[1], created.isocalendar()[0]
-        end_d = closed.isocalendar() if closed else datetime.now().isocalendar()
-        week_d_end, year_end = end_d[1], end_d[0]
-        is_closed = closed is not None
+        # PyGithub returns timezone-aware UTC datetimes; match that for "now".
+        end_dt = closed if closed else datetime.now(timezone.utc)
 
+        # Walk ISO weeks from creation to closed/now using fromisocalendar.
+        # The previous hand-rolled `(week + 1) % 53` looped through a
+        # non-existent "week 0" and broke for ISO years that have 53 weeks
+        # (e.g. 2026), so we iterate week-Mondays directly instead.
+        start_iso = created.isocalendar()
+        end_iso = end_dt.isocalendar()
+        week_d_start = start_iso[1]
+        week_d_end = end_iso[1]
+        monday = date.fromisocalendar(start_iso[0], start_iso[1], 1)
+        end_monday = date.fromisocalendar(end_iso[0], end_iso[1], 1)
         week_year = []
-        use_year = year_start
-        week_d_i = week_d_start
-        while week_d_i != week_d_end + 1:
-            if week_d_i == 0:
-                use_year = year_end
-            week_year.append((week_d_i, use_year))
-            week_d_i = (week_d_i + 1) % 53
+        while monday <= end_monday:
+            iso_year, iso_week, _ = monday.isocalendar()
+            week_year.append((iso_week, iso_year))
+            monday += timedelta(weeks=1)
+        is_closed = closed is not None
         #
         if len(week_year) > settings["warn_if_opened_longer_than"]:
             lately = datetime.now() - timedelta(days=14)
@@ -1310,7 +1355,7 @@ if __name__ == '__main__':
             since = datetime.now() - timedelta(weeks=int(m.group(1)))
             settings["start_time"] = since.replace(tzinfo=timezone.utc)
         else:
-            _logger.critical("Unknown format f{flags.check_last}")
+            _logger.critical(f"Unknown format {flags.check_last}")
             sys.exit(1)
         _logger.info(f"Valid issues/PRs since {settings['start_time']}")
 
