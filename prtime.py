@@ -115,10 +115,15 @@ def log_err(msg, pr, pr_id):
     _logger.info(tmpl, msg, pr_id, pr.html_url)
 
 
-_rec_hours_token = re.compile(r'[+-]?(?:\d+\.?\d*|\.\d+)')
+# Use literal [0-9] rather than \d (which matches Unicode-property digits)
+# so the parser stays ASCII-only and predictable.
+_rec_hours_token = re.compile(r'[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)')
 _rec_hours_expr = re.compile(
-    r'^[+-]?(?:\d+\.?\d*|\.\d+)(?:[+-](?:\d+\.?\d*|\.\d+))*$'
+    r'^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[+-](?:[0-9]+\.?[0-9]*|\.[0-9]+))*$'
 )
+# Cap input length so a PR author can't DoS the parser with a megabyte
+# of `1+1+1+...`. Real ETA cells are a handful of additive terms.
+_MAX_HOURS_EXPR_LEN = 256
 
 
 def _safe_sum_hours(s: str) -> float:
@@ -132,10 +137,13 @@ def _safe_sum_hours(s: str) -> float:
     s = s.strip()
     if not s or s == "-":
         return 0.0
+    if len(s) > _MAX_HOURS_EXPR_LEN:
+        raise ValueError(f"hours expression too long: {len(s)} chars")
     # comma-as-decimal -> dot-as-decimal (only between digits)
-    s = re.sub(r'(\d),(\d)', r'\1.\2', s)
-    # collapse internal whitespace
-    s = re.sub(r'\s+', '', s)
+    s = re.sub(r'([0-9]),([0-9])', r'\1.\2', s)
+    # collapse internal ASCII whitespace (space + tab only; keep this
+    # ASCII-only so non-breaking-space etc. fail the pattern check below).
+    s = re.sub(r'[ \t]+', '', s)
     if not _rec_hours_expr.match(s):
         raise ValueError(f"Cannot parse hours expression: {s!r}")
     return sum(float(t) for t in _rec_hours_token.findall(s))

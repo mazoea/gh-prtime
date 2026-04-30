@@ -73,6 +73,21 @@ class TestSafeSumHours(unittest.TestCase):
             with self.assertRaises(ValueError, msg=f"should reject {evil!r}"):
                 _safe_sum_hours(evil)
 
+    def test_rejects_unicode_digits(self):
+        """\\d would match Unicode-property digits like Arabic-Indic digits;
+        the literal [0-9] allowlist must reject them."""
+        from prtime import _safe_sum_hours
+        # U+0660..U+0669 are Arabic-Indic digits; they're "digits" to \d.
+        with self.assertRaises(ValueError):
+            _safe_sum_hours("١+٢")
+
+    def test_rejects_oversized_input(self):
+        """Cap input length so a PR author can't DoS the parser."""
+        from prtime import _safe_sum_hours
+        long_expr = "1" + ("+1" * 1000)
+        with self.assertRaises(ValueError):
+            _safe_sum_hours(long_expr)
+
 
 class TestPrevMonday(unittest.TestCase):
     """`prev_monday` was using local-time `datetime.today()` while the rest of
