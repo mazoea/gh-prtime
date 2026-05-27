@@ -1,13 +1,13 @@
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v6.0.0
     hooks:
     - id: check-json
     - id: mixed-line-ending
       args: ['--fix=lf']
       description: Forces to replace line ending by the UNIX 'lf' character.
 -   repo: https://github.com/pre-commit/mirrors-autopep8
-    rev: v2.0.2
+    rev: v2.0.4
     hooks:
     -   id: autopep8
         args:
@@ -15,13 +15,17 @@ repos:
         - --max-line-length=90
         - --ignore=E402
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v6.0.0
     hooks:
     -   id: check-added-large-files
         args:
         - --maxkb=10000
         - --enforce-all
 - repo: https://github.com/charliermarsh/ruff-pre-commit
-  rev: 'v0.0.257'
+  rev: 'v0.15.14'
   hooks:
     - id: ruff
+- repo: https://github.com/gitleaks/gitleaks
+  rev: v8.30.0
+  hooks:
+    - id: gitleaks
