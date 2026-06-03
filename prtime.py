@@ -149,7 +149,9 @@ def sum_hours(s, pr_id, pr_html=None):
             raise ValueError(f"disallowed node: {type(node).__name__}")
         return float(eval(compile(tree, "<sum_hours>", "eval"), {"__builtins__": {}}, {}))
     except Exception:
-        _logger.info(f"Cannot parse [{s}] in [{pr_id}] [{pr_html or ''}]")
+        # repr() the attacker-controlled values so embedded newlines can't forge
+        # extra log lines (s/pr_html come from PR body content).
+        _logger.info(f"Cannot parse [{s!r}] in [{pr_id}] [{(pr_html or '')!r}]")
     return -1.
 
 
