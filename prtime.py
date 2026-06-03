@@ -149,9 +149,10 @@ def sum_hours(s, pr_id, pr_html=None):
             raise ValueError(f"disallowed node: {type(node).__name__}")
         return float(eval(compile(tree, "<sum_hours>", "eval"), {"__builtins__": {}}, {}))
     except Exception:
-        # repr() the attacker-controlled values so embedded newlines can't forge
-        # extra log lines (s/pr_html come from PR body content).
-        _logger.info(f"Cannot parse [{s!r}] in [{pr_id}] [{(pr_html or '')!r}]")
+        # repr() every untrusted field so embedded newlines can't forge extra log
+        # lines: s is the ETA arithmetic string, pr_id includes the PR title (via
+        # get_pr_id), and pr_html is the PR URL. Parameterized %r keeps it lazy.
+        _logger.info("Cannot parse [%r] in [%r] [%r]", s, pr_id, pr_html or "")
     return -1.
 
 
