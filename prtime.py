@@ -25,7 +25,7 @@ import shutil
 import tqdm
 from pprint import pformat
 from collections import defaultdict, OrderedDict
-from github import Github
+from github import Github, Auth
 
 from datetime import datetime, timedelta, date, timezone
 
@@ -1182,7 +1182,7 @@ if __name__ == '__main__':
     # init based on settings
     hours_row.init()
 
-    gh = Github(os.environ[gh_key])
+    gh = Github(auth=Auth.Token(os.environ[gh_key]))
 
     if flags.check_last:
         rec = re.compile(r"^(\d+)w$")
