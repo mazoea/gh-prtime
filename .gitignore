@@ -3,3 +3,4 @@ __state
 ___*
 *.bak
 __pycache__/
+*.pyc
