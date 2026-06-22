@@ -1,2 +1,8 @@
 PyGithub>=2.0
-tqdm
+# Floor clears known tqdm advisories incl. CVE-2024-34062 (CLI arg injection,
+# fixed in 4.66.3) flagged by OSV/CodeRabbit on the unconstrained entry.
+tqdm>=4.66.3
+# requests (a PyGithub dependency) only supports chardet >=3.0.2,<6.0.0.
+# Newer chardet (e.g. 7.x) trips RequestsDependencyWarning and makes requests
+# ignore charset_normalizer. Pin to the supported range.
+chardet>=3.0.2,<6.0.0
