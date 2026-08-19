@@ -249,6 +249,19 @@ class TestXlsxWriter(unittest.TestCase):
         # --force overwrites
         self.assertEqual(write_rows_xlsx(path, "od 10-Aug-26", [r], force=True), 1)
 
+    def test_row_cap_refused(self):
+        import os
+        import tempfile
+        from prtime import (hours_row, write_rows_xlsx,
+                            _XLSX_FIRST_ROW, _XLSX_LAST_ROW)
+
+        path = os.path.join(tempfile.mkdtemp(), "sheet.xlsx")
+        self._template_workbook(path)
+        capacity = _XLSX_LAST_ROW - _XLSX_FIRST_ROW + 1
+        too_many = [hours_row() for _ in range(capacity + 1)]
+        with self.assertRaises(SystemExit):
+            write_rows_xlsx(path, "od 5-Jan-26", too_many)
+
 
 if __name__ == '__main__':
     # unittest.main()

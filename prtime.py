@@ -1111,6 +1111,11 @@ def find_hours_all(gh, start_date: datetime, output_md: str = None):
 # them over, so we re-create them for the new tab.
 _XLSX_TEMPLATE = "template"
 _XLSX_FIRST_ROW = 14
+_XLSX_LAST_ROW = 36
+# Locale-independent month abbreviations for the `od <d>-<Mon>-<yy>` tab name
+# (strftime("%b") would follow the OS locale and drift from the sheet convention).
+_XLSX_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _XLSX_SCOPED_NAMES = {
     "Cust": "$C$14:$C$36", "State": "$G$14:$G$36", "Phase_Total": "$N$14:$N$36",
     "Dev_AY": "$P$14:$P$36", "Dev_JH": "$Q$14:$Q$36", "Dev_JS": "$R$14:$R$36",
@@ -1120,8 +1125,9 @@ _XLSX_SCOPED_NAMES = {
 
 
 def xlsx_tab_name(monday: date) -> str:
-    """Tab name for a week's Monday, matching the sheet convention `od 10-Aug-26`."""
-    return "od %d-%s-%s" % (monday.day, monday.strftime("%b"), monday.strftime("%y"))
+    """Tab name for a week's Monday, e.g. `od 10-Aug-26` (locale-independent)."""
+    return "od %d-%s-%02d" % (
+        monday.day, _XLSX_MONTHS[monday.month - 1], monday.year % 100)
 
 
 def _xlsx_cell(v):
@@ -1145,6 +1151,15 @@ def write_rows_xlsx(xlsx_path: str, tab: str, rows, force: bool = False):
     import openpyxl
     from openpyxl.workbook.defined_name import DefinedName
 
+    # The template's scoped ranges and summary formulas only cover rows 14..36;
+    # refuse rather than spill rows outside that area (and outside the ranges the
+    # header totals sum over).
+    capacity = _XLSX_LAST_ROW - _XLSX_FIRST_ROW + 1
+    if len(rows) > capacity:
+        raise SystemExit(
+            f"{len(rows)} rows exceed the template's {capacity}-row area "
+            f"(rows {_XLSX_FIRST_ROW}-{_XLSX_LAST_ROW}); extend the template first")
+
     wb = openpyxl.load_workbook(xlsx_path)
     if _XLSX_TEMPLATE not in wb.sheetnames:
         raise SystemExit(f"[{xlsx_path}] has no [{_XLSX_TEMPLATE}] sheet to copy")
@@ -1158,9 +1173,8 @@ def write_rows_xlsx(xlsx_path: str, tab: str, rows, force: bool = False):
     ws.title = tab
     for name, rng in _XLSX_SCOPED_NAMES.items():
         ws.defined_names.add(DefinedName(name, attr_text=f"'{tab}'!{rng}"))
-    # place the new tab right after `template`
-    wb._sheets.remove(ws)
-    wb._sheets.insert(wb.sheetnames.index(_XLSX_TEMPLATE) + 1, ws)
+    # place the new tab right after `template` (public API, not wb._sheets)
+    wb.move_sheet(ws, offset=(wb.sheetnames.index(_XLSX_TEMPLATE) + 1) - wb.index(ws))
 
     for i, r in enumerate(rows):
         excel_row = _XLSX_FIRST_ROW + i
@@ -1338,6 +1352,9 @@ if __name__ == '__main__':
     if flags.xlsx:
         if flags.week:
             monday = datetime.strptime(flags.week, "%Y-%m-%d").date()
+            if monday.weekday() != 0:
+                _logger.critical("--week must be a Monday (got %s)", monday)
+                sys.exit(1)
         else:
             monday = prev_monday()
         write_week_xlsx(gh, settings["start_time"], flags.xlsx, monday, force=flags.force)
