@@ -46,6 +46,22 @@ python prtime.py --validate --state=closed --sort=merged_at
 python prtime.py --checkpoint
 ```
 
+## Write the weekly tab straight into the timesheet .xlsx
+
+Copies the `template` sheet into a new `od <date>` tab and fills the ETA-tracked
+rows (the same data as `--hours`), so you don't hand-transcribe the Markdown.
+
+```
+# previous Monday's week, into the shared timesheet
+python prtime.py --xlsx "Shared time sheets.xlsx" --check-last=2w
+
+# an explicit week; --force overwrites an existing tab
+python prtime.py --xlsx "Shared time sheets.xlsx" --week=2026-08-10 --check-last=2w --force
+```
+
+Still filled by hand (not derivable from PR ETA tables): non-PR lines
+(Release / Tier), OFF/leave hours, and any multi-week split deltas.
+
 # Other projects
 
 ```

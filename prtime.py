@@ -235,6 +235,10 @@ class hours_row(object):
             s += f"| {v} "
         return s + "|"
 
+    def values(self):
+        """Cell values in column order (maps to the xlsx sheet columns B..Y)."""
+        return list(self._d.values())
+
 
 class eta_row:
     """
@@ -1097,6 +1101,113 @@ def find_hours_all(gh, start_date: datetime, output_md: str = None):
                 fout.write(f"{str(r)}\n")
 
 
+# =================
+# xlsx weekly-tab writer
+# =================
+
+# The weekly `od <date>` tabs in the shared timesheet are copies of the
+# `template` sheet. Each sheet carries 10 *sheet-scoped* defined names that the
+# header summary formulas depend on; openpyxl's copy_worksheet does not carry
+# them over, so we re-create them for the new tab.
+_XLSX_TEMPLATE = "template"
+_XLSX_FIRST_ROW = 14
+_XLSX_SCOPED_NAMES = {
+    "Cust": "$C$14:$C$36", "State": "$G$14:$G$36", "Phase_Total": "$N$14:$N$36",
+    "Dev_AY": "$P$14:$P$36", "Dev_JH": "$Q$14:$Q$36", "Dev_JS": "$R$14:$R$36",
+    "Dev_TM": "$S$14:$S$36", "Dev_JM": "$T$14:$T$36", "Dev_Others": "$U$14:$U$36",
+    "Last_Week_Total": "$Y$14:$Y$36",
+}
+
+
+def xlsx_tab_name(monday: date) -> str:
+    """Tab name for a week's Monday, matching the sheet convention `od 10-Aug-26`."""
+    return "od %d-%s-%s" % (monday.day, monday.strftime("%b"), monday.strftime("%y"))
+
+
+def _xlsx_cell(v):
+    """Coerce a hours_row cell for openpyxl: blank for empty, str for datetimes."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (datetime, date)):
+        # existing sheets store Closed/Created as strings; openpyxl also rejects
+        # tz-aware datetimes, so stringify to stay consistent and safe.
+        return str(v)
+    return v
+
+
+def write_rows_xlsx(xlsx_path: str, tab: str, rows, force: bool = False):
+    """Write `hours_row` objects into a new `tab` of `xlsx_path` (no network).
+
+    Copies the `template` sheet, re-creates its sheet-scoped names, and writes
+    each row's cells (A = running #, B..Y follow `hours_row` order). Pure I/O so
+    it can be unit-tested without GitHub. Returns the number of rows written.
+    """
+    import openpyxl
+    from openpyxl.workbook.defined_name import DefinedName
+
+    wb = openpyxl.load_workbook(xlsx_path)
+    if _XLSX_TEMPLATE not in wb.sheetnames:
+        raise SystemExit(f"[{xlsx_path}] has no [{_XLSX_TEMPLATE}] sheet to copy")
+    if tab in wb.sheetnames:
+        if not force:
+            raise SystemExit(
+                f"tab [{tab}] already exists in [{xlsx_path}]; pass --force to overwrite")
+        del wb[tab]
+
+    ws = wb.copy_worksheet(wb[_XLSX_TEMPLATE])
+    ws.title = tab
+    for name, rng in _XLSX_SCOPED_NAMES.items():
+        ws.defined_names.add(DefinedName(name, attr_text=f"'{tab}'!{rng}"))
+    # place the new tab right after `template`
+    wb._sheets.remove(ws)
+    wb._sheets.insert(wb.sheetnames.index(_XLSX_TEMPLATE) + 1, ws)
+
+    for i, r in enumerate(rows):
+        excel_row = _XLSX_FIRST_ROW + i
+        ws.cell(row=excel_row, column=1, value=i + 1)      # A = running #
+        for j, v in enumerate(r.values()):                 # B..Y follow hours_row order
+            ws.cell(row=excel_row, column=2 + j, value=_xlsx_cell(v))
+
+    wb.save(xlsx_path)
+    return len(rows)
+
+
+def write_week_xlsx(gh, start_date: datetime, xlsx_path: str, monday: date,
+                    force: bool = False):
+    """Write the ETA-tracked rows for `monday`'s week into a new tab of `xlsx_path`.
+
+    Fetches the same rows `find_hours_all` reports, then writes them via
+    `write_rows_xlsx`. Work not derivable from PR ETA tables - non-PR lines
+    (Release / Tier), OFF/leave hours, and multi-week split judgement - is left
+    blank for the human to fill in. Returns the tab name (or None).
+    """
+    weeks = pr_with_eta_hours(gh, start_date)
+    week_key = "%d_%02d" % (monday.isocalendar()[0], monday.isocalendar()[1])
+    if week_key not in weeks:
+        _logger.critical("No ETA-tracked PRs for week [%s] (%s)", week_key, monday)
+        return None
+    week_n = monday.isocalendar()[1]
+
+    sort_states = {'closed': 0, 'created': 1, 'open': 2}
+    rows = []
+    for repo_name, iss_pr, week_state in sorted(
+            weeks[week_key], key=lambda x: sort_states.get(x[2], 10)):
+        eta = parse_eta(iss_pr, get_pr_id(repo_name, iss_pr))
+        if eta is None:
+            continue
+        eta_rel = eta.relative_eta(monday)
+        if eta_rel is None:
+            continue
+        rows.append(eta_rel.md_hours(week_n, in_progress=(week_state != "closed")))
+
+    tab = xlsx_tab_name(monday)
+    n = write_rows_xlsx(xlsx_path, tab, rows, force=force)
+    _logger.info("Wrote [%d] ETA-tracked rows to tab [%s] in [%s]", n, tab, xlsx_path)
+    _logger.info("Still MANUAL (not in PR ETA tables): Release / Tier lines, OFF hours, "
+                 "and any multi-week split deltas.")
+    return tab
+
+
 def store(gh, out_file):
     d = {
         "state": {
@@ -1165,6 +1276,12 @@ if __name__ == '__main__':
         '--dry-run', help='Do not make any changes (valid for --checkpoint)', required=False, action="store_true")
     parser.add_argument(
         '--output-file', help='Output file (valid for --hours)', required=False, default=None, type=str)
+    parser.add_argument(
+        '--xlsx', help='Write the week tab into this .xlsx (copies the `template` sheet)', required=False, default=None, type=str)
+    parser.add_argument(
+        '--week', help='Target Monday YYYY-MM-DD for --xlsx (default: previous Monday)', required=False, default=None, type=str)
+    parser.add_argument(
+        '--force', help='Overwrite the tab if it already exists (valid for --xlsx)', required=False, action="store_true")
     flags = parser.parse_args()
 
     _logger.info('Started at [%s]', datetime.now())
@@ -1215,6 +1332,15 @@ if __name__ == '__main__':
     if flags.checkpoint:
         start_date = settings["start_time"]
         store_checkpoint(gh, start_date, dry=flags.dry_run)
+        sys.exit(0)
+
+    # write the week's tab straight into the shared timesheet
+    if flags.xlsx:
+        if flags.week:
+            monday = datetime.strptime(flags.week, "%Y-%m-%d").date()
+        else:
+            monday = prev_monday()
+        write_week_xlsx(gh, settings["start_time"], flags.xlsx, monday, force=flags.force)
         sys.exit(0)
 
     # iterate and show hours for all PRs conforming to the input

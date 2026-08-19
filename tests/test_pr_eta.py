@@ -181,9 +181,80 @@ class TestSumHours(unittest.TestCase):
         self.assertEqual(self.sum_hours(too_long, "test"), -1.0)
 
 
+class TestXlsxWriter(unittest.TestCase):
+    """ --xlsx weekly-tab writer (no network). """
+
+    def setUp(self):
+        import prtime
+        prtime.settings = {"devs": ["AY", "JH", "JS", "TM", "JM"]}
+        prtime.hours_row.init()
+
+    @staticmethod
+    def _template_workbook(path):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        wb.active.title = "template"
+        wb.save(path)
+
+    def test_tab_name(self):
+        from datetime import date
+        from prtime import xlsx_tab_name
+        self.assertEqual(xlsx_tab_name(date(2026, 8, 10)), "od 10-Aug-26")
+        self.assertEqual(xlsx_tab_name(date(2026, 8, 3)), "od 3-Aug-26")
+
+    def test_cell_coerce(self):
+        from datetime import datetime, timezone
+        from prtime import _xlsx_cell
+        self.assertIsNone(_xlsx_cell(""))
+        self.assertIsNone(_xlsx_cell(None))
+        self.assertEqual(_xlsx_cell(23.5), 23.5)
+        self.assertEqual(_xlsx_cell("advent"), "advent")
+        # openpyxl rejects tz-aware datetimes -> must be stringified
+        self.assertIsInstance(
+            _xlsx_cell(datetime(2026, 8, 13, tzinfo=timezone.utc)), str)
+
+    def test_write_rows_and_force(self):
+        import os
+        import tempfile
+        import openpyxl
+        from prtime import hours_row, write_rows_xlsx
+
+        path = os.path.join(tempfile.mkdtemp(), "sheet.xlsx")
+        self._template_workbook(path)
+
+        r = hours_row()
+        r[r.h_week] = 33
+        r[r.h_customer] = "advent"
+        r[r.h_issue] = "c-image-to-text/pull/2078:gIssue 1133"
+        r[r.h_state] = "closed"
+        r[r.h_phase_dev] = 23.5
+        r.dev("TM", 23.5)
+
+        n = write_rows_xlsx(path, "od 10-Aug-26", [r])
+        self.assertEqual(n, 1)
+
+        wb = openpyxl.load_workbook(path)
+        self.assertIn("od 10-Aug-26", wb.sheetnames)
+        ws = wb["od 10-Aug-26"]
+        self.assertEqual(len(ws.defined_names), 10)      # sheet-scoped names re-created
+        self.assertEqual(ws["A14"].value, 1)             # running #
+        self.assertEqual(ws["B14"].value, 33)            # #Week
+        self.assertEqual(ws["C14"].value, "advent")      # Cust
+        self.assertEqual(ws["G14"].value, "closed")      # State
+        self.assertEqual(ws["S14"].value, 23.5)          # Dev TM column
+
+        # existing tab without --force must refuse
+        with self.assertRaises(SystemExit):
+            write_rows_xlsx(path, "od 10-Aug-26", [r])
+        # --force overwrites
+        self.assertEqual(write_rows_xlsx(path, "od 10-Aug-26", [r], force=True), 1)
+
+
 if __name__ == '__main__':
     # unittest.main()
     suite = unittest.TestSuite()
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(Testbasic))
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestWeekIteration))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestSumHours))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestXlsxWriter))
     unittest.TextTestRunner(verbosity=2).run(suite)

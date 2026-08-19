@@ -6,3 +6,5 @@ tqdm>=4.66.3
 # Newer chardet (e.g. 7.x) trips RequestsDependencyWarning and makes requests
 # ignore charset_normalizer. Pin to the supported range.
 chardet>=3.0.2,<6.0.0
+# Writing the weekly `od <date>` tab into the shared timesheet (.xlsx) via --xlsx.
+openpyxl>=3.1
